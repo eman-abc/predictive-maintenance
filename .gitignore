@@ -1,0 +1,34 @@
+# Data
+data/raw/
+data/processed/*.parquet
+data/synthetic/*.parquet
+mlruns/
+
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model artifacts (keep placeholders, ignore trained copies)
+models/*.pkl
+models/*.pt
+models/*.joblib
+!models/.gitkeep
