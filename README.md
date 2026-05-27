@@ -85,6 +85,10 @@ ollama pull llama3.2
 
 Set `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `.env`.
 
+## Contributing
+
+Solo workflow: short-lived feature branches, squash merge to `main`, conventional commits. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT
