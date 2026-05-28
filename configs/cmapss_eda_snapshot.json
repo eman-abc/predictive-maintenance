@@ -1,0 +1,464 @@
+{
+  "FD001": {
+    "dataset_id": "FD001",
+    "description": "CMAPSS FD001: 1 operating condition(s), 1 fault mode(s)",
+    "paths": {
+      "raw_dir": "./data/raw/cmapss",
+      "train_file": "train_FD001.txt",
+      "test_file": "test_FD001.txt",
+      "rul_file": "RUL_FD001.txt"
+    },
+    "labels": {
+      "rul_cap": 125,
+      "failure_horizons_cycles": [
+        30,
+        72
+      ]
+    },
+    "sensors": {
+      "drop": [
+        "sensor_1",
+        "sensor_5",
+        "sensor_6",
+        "sensor_10",
+        "sensor_16",
+        "sensor_18",
+        "sensor_19"
+      ],
+      "keep": [
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_7",
+        "sensor_8",
+        "sensor_9",
+        "sensor_11",
+        "sensor_12",
+        "sensor_13",
+        "sensor_14",
+        "sensor_15",
+        "sensor_17",
+        "sensor_20",
+        "sensor_21"
+      ]
+    },
+    "operating_conditions": {
+      "n_scenarios": 1,
+      "nunique_per_column": {
+        "op_setting_1": 158,
+        "op_setting_2": 13,
+        "op_setting_3": 1
+      },
+      "n_unique_op_triplets": 3,
+      "per_unit_op_stable": false,
+      "cluster_for_normalization": false
+    },
+    "feature_engineering": {
+      "rolling_windows": [
+        5,
+        10,
+        30
+      ],
+      "lag_cycles": [
+        1,
+        3,
+        5
+      ],
+      "include_rate_of_change": true,
+      "include_rolling_slope": true,
+      "include_spectral": true,
+      "spectral_sensors": [
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_7",
+        "sensor_8"
+      ],
+      "train_row_filter_max_rul": 125
+    },
+    "eda_snapshot": {
+      "train_units": 100,
+      "test_units": 100,
+      "train_cycle_range": [
+        128,
+        362
+      ],
+      "test_cycle_range": [
+        31,
+        303
+      ],
+      "train_run_length": {
+        "min": 128.0,
+        "max": 362.0,
+        "mean": 206.31,
+        "median": 199.0,
+        "std": 46.3427492067573
+      },
+      "test_run_length": {
+        "min": 31.0,
+        "max": 303.0,
+        "mean": 130.96,
+        "median": 133.5,
+        "std": 53.5934791751852
+      },
+      "implied_failure_cycle": {
+        "min": 141.0,
+        "max": 341.0,
+        "mean": 206.48,
+        "median": 199.0
+      },
+      "rul_at_last_cycle": {
+        "min": 7.0,
+        "max": 145.0,
+        "mean": 75.52,
+        "median": 86.0
+      }
+    }
+  },
+  "FD002": {
+    "dataset_id": "FD002",
+    "description": "CMAPSS FD002: 6 operating condition(s), 1 fault mode(s)",
+    "paths": {
+      "raw_dir": "./data/raw/cmapss",
+      "train_file": "train_FD002.txt",
+      "test_file": "test_FD002.txt",
+      "rul_file": "RUL_FD002.txt"
+    },
+    "labels": {
+      "rul_cap": 125,
+      "failure_horizons_cycles": [
+        30,
+        72
+      ]
+    },
+    "sensors": {
+      "drop": [],
+      "keep": [
+        "sensor_1",
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_5",
+        "sensor_6",
+        "sensor_7",
+        "sensor_8",
+        "sensor_9",
+        "sensor_10",
+        "sensor_11",
+        "sensor_12",
+        "sensor_13",
+        "sensor_14",
+        "sensor_15",
+        "sensor_16",
+        "sensor_17",
+        "sensor_18",
+        "sensor_19",
+        "sensor_20",
+        "sensor_21"
+      ]
+    },
+    "operating_conditions": {
+      "n_scenarios": 6,
+      "nunique_per_column": {
+        "op_setting_1": 536,
+        "op_setting_2": 105,
+        "op_setting_3": 2
+      },
+      "n_unique_op_triplets": 11,
+      "per_unit_op_stable": false,
+      "cluster_for_normalization": true
+    },
+    "feature_engineering": {
+      "rolling_windows": [
+        5,
+        10,
+        30
+      ],
+      "lag_cycles": [
+        1,
+        3,
+        5
+      ],
+      "include_rate_of_change": true,
+      "include_rolling_slope": true,
+      "include_spectral": true,
+      "spectral_sensors": [
+        "sensor_1",
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_5"
+      ],
+      "train_row_filter_max_rul": 125
+    },
+    "eda_snapshot": {
+      "train_units": 260,
+      "test_units": 259,
+      "train_cycle_range": [
+        128,
+        378
+      ],
+      "test_cycle_range": [
+        21,
+        367
+      ],
+      "train_run_length": {
+        "min": 128.0,
+        "max": 378.0,
+        "mean": 206.76538461538462,
+        "median": 199.0,
+        "std": 46.78219839558725
+      },
+      "test_run_length": {
+        "min": 21.0,
+        "max": 367.0,
+        "mean": 131.23938223938225,
+        "median": 132.0,
+        "std": 63.08592510935949
+      },
+      "implied_failure_cycle": {
+        "min": 126.0,
+        "max": 378.0,
+        "mean": 212.4247104247104,
+        "median": 204.0
+      },
+      "rul_at_last_cycle": {
+        "min": 6.0,
+        "max": 194.0,
+        "mean": 81.18532818532819,
+        "median": 80.0
+      }
+    }
+  },
+  "FD003": {
+    "dataset_id": "FD003",
+    "description": "CMAPSS FD003: 1 operating condition(s), 2 fault mode(s)",
+    "paths": {
+      "raw_dir": "./data/raw/cmapss",
+      "train_file": "train_FD003.txt",
+      "test_file": "test_FD003.txt",
+      "rul_file": "RUL_FD003.txt"
+    },
+    "labels": {
+      "rul_cap": 125,
+      "failure_horizons_cycles": [
+        30,
+        72
+      ]
+    },
+    "sensors": {
+      "drop": [
+        "sensor_1",
+        "sensor_5",
+        "sensor_16",
+        "sensor_18",
+        "sensor_19"
+      ],
+      "keep": [
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_6",
+        "sensor_7",
+        "sensor_8",
+        "sensor_9",
+        "sensor_10",
+        "sensor_11",
+        "sensor_12",
+        "sensor_13",
+        "sensor_14",
+        "sensor_15",
+        "sensor_17",
+        "sensor_20",
+        "sensor_21"
+      ]
+    },
+    "operating_conditions": {
+      "n_scenarios": 1,
+      "nunique_per_column": {
+        "op_setting_1": 160,
+        "op_setting_2": 14,
+        "op_setting_3": 1
+      },
+      "n_unique_op_triplets": 3,
+      "per_unit_op_stable": false,
+      "cluster_for_normalization": false
+    },
+    "feature_engineering": {
+      "rolling_windows": [
+        5,
+        10,
+        30
+      ],
+      "lag_cycles": [
+        1,
+        3,
+        5
+      ],
+      "include_rate_of_change": true,
+      "include_rolling_slope": true,
+      "include_spectral": true,
+      "spectral_sensors": [
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_6",
+        "sensor_7"
+      ],
+      "train_row_filter_max_rul": 125
+    },
+    "eda_snapshot": {
+      "train_units": 100,
+      "test_units": 100,
+      "train_cycle_range": [
+        145,
+        525
+      ],
+      "test_cycle_range": [
+        38,
+        475
+      ],
+      "train_run_length": {
+        "min": 145.0,
+        "max": 525.0,
+        "mean": 247.2,
+        "median": 220.5,
+        "std": 86.48383979365478
+      },
+      "test_run_length": {
+        "min": 38.0,
+        "max": 475.0,
+        "mean": 165.96,
+        "median": 148.0,
+        "std": 86.8917729248299
+      },
+      "implied_failure_cycle": {
+        "min": 137.0,
+        "max": 484.0,
+        "mean": 241.28,
+        "median": 222.5
+      },
+      "rul_at_last_cycle": {
+        "min": 6.0,
+        "max": 145.0,
+        "mean": 75.32,
+        "median": 77.5
+      }
+    }
+  },
+  "FD004": {
+    "dataset_id": "FD004",
+    "description": "CMAPSS FD004: 6 operating condition(s), 2 fault mode(s)",
+    "paths": {
+      "raw_dir": "./data/raw/cmapss",
+      "train_file": "train_FD004.txt",
+      "test_file": "test_FD004.txt",
+      "rul_file": "RUL_FD004.txt"
+    },
+    "labels": {
+      "rul_cap": 125,
+      "failure_horizons_cycles": [
+        30,
+        72
+      ]
+    },
+    "sensors": {
+      "drop": [],
+      "keep": [
+        "sensor_1",
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_5",
+        "sensor_6",
+        "sensor_7",
+        "sensor_8",
+        "sensor_9",
+        "sensor_10",
+        "sensor_11",
+        "sensor_12",
+        "sensor_13",
+        "sensor_14",
+        "sensor_15",
+        "sensor_16",
+        "sensor_17",
+        "sensor_18",
+        "sensor_19",
+        "sensor_20",
+        "sensor_21"
+      ]
+    },
+    "operating_conditions": {
+      "n_scenarios": 6,
+      "nunique_per_column": {
+        "op_setting_1": 536,
+        "op_setting_2": 105,
+        "op_setting_3": 2
+      },
+      "n_unique_op_triplets": 11,
+      "per_unit_op_stable": false,
+      "cluster_for_normalization": true
+    },
+    "feature_engineering": {
+      "rolling_windows": [
+        5,
+        10,
+        30
+      ],
+      "lag_cycles": [
+        1,
+        3,
+        5
+      ],
+      "include_rate_of_change": true,
+      "include_rolling_slope": true,
+      "include_spectral": true,
+      "spectral_sensors": [
+        "sensor_1",
+        "sensor_2",
+        "sensor_3",
+        "sensor_4",
+        "sensor_5"
+      ],
+      "train_row_filter_max_rul": 125
+    },
+    "eda_snapshot": {
+      "train_units": 249,
+      "test_units": 248,
+      "train_cycle_range": [
+        128,
+        543
+      ],
+      "test_cycle_range": [
+        19,
+        486
+      ],
+      "train_run_length": {
+        "min": 128.0,
+        "max": 543.0,
+        "mean": 245.97991967871485,
+        "median": 234.0,
+        "std": 73.11080023692699
+      },
+      "test_run_length": {
+        "min": 19.0,
+        "max": 486.0,
+        "mean": 166.18548387096774,
+        "median": 153.5,
+        "std": 91.60652231216561
+      },
+      "implied_failure_cycle": {
+        "min": 126.0,
+        "max": 554.0,
+        "mean": 252.73790322580646,
+        "median": 235.0
+      },
+      "rul_at_last_cycle": {
+        "min": 6.0,
+        "max": 195.0,
+        "mean": 86.5524193548387,
+        "median": 88.0
+      }
+    }
+  }
+}

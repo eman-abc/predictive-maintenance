@@ -1,0 +1,95 @@
+dataset_id: FD001
+description: 'CMAPSS FD001: 1 operating condition(s), 1 fault mode(s)'
+paths:
+  raw_dir: ./data/raw/cmapss
+  train_file: train_FD001.txt
+  test_file: test_FD001.txt
+  rul_file: RUL_FD001.txt
+labels:
+  rul_cap: 125
+  failure_horizons_cycles:
+  - 30
+  - 72
+sensors:
+  drop:
+  - sensor_1
+  - sensor_5
+  - sensor_6
+  - sensor_10
+  - sensor_16
+  - sensor_18
+  - sensor_19
+  keep:
+  - sensor_2
+  - sensor_3
+  - sensor_4
+  - sensor_7
+  - sensor_8
+  - sensor_9
+  - sensor_11
+  - sensor_12
+  - sensor_13
+  - sensor_14
+  - sensor_15
+  - sensor_17
+  - sensor_20
+  - sensor_21
+operating_conditions:
+  n_scenarios: 1
+  nunique_per_column:
+    op_setting_1: 158
+    op_setting_2: 13
+    op_setting_3: 1
+  n_unique_op_triplets: 3
+  per_unit_op_stable: false
+  cluster_for_normalization: false
+feature_engineering:
+  rolling_windows:
+  - 5
+  - 10
+  - 30
+  lag_cycles:
+  - 1
+  - 3
+  - 5
+  include_rate_of_change: true
+  include_rolling_slope: true
+  include_spectral: true
+  spectral_sensors:
+  - sensor_2
+  - sensor_3
+  - sensor_4
+  - sensor_7
+  - sensor_8
+  train_row_filter_max_rul: 125
+eda_snapshot:
+  train_units: 100
+  test_units: 100
+  train_cycle_range:
+  - 128
+  - 362
+  test_cycle_range:
+  - 31
+  - 303
+  train_run_length:
+    min: 128.0
+    max: 362.0
+    mean: 206.31
+    median: 199.0
+    std: 46.3427492067573
+  test_run_length:
+    min: 31.0
+    max: 303.0
+    mean: 130.96
+    median: 133.5
+    std: 53.5934791751852
+  implied_failure_cycle:
+    min: 141.0
+    max: 341.0
+    mean: 206.48
+    median: 199.0
+  rul_at_last_cycle:
+    min: 7.0
+    max: 145.0
+    mean: 75.52
+    median: 86.0
