@@ -68,8 +68,48 @@ def load_cmapss_rul(data_dir: str | Path, dataset: str = "FD001") -> pd.Series:
 
 
 def compute_train_rul(df: pd.DataFrame, cap: int = 125) -> pd.DataFrame:
-    """Compute capped RUL for each cycle in training data."""
+    """Compute capped piecewise RUL for training trajectories (run-to-failure)."""
     max_cycle = df.groupby("unit_id")["cycle"].transform("max")
     df = df.copy()
     df["rul"] = (max_cycle - df["cycle"]).clip(upper=cap)
+    return df
+
+
+def compute_test_rul(
+    df: pd.DataFrame,
+    rul_at_last_cycle: pd.Series,
+    cap: int | None = 125,
+) -> pd.DataFrame:
+    """
+    Reconstruct RUL at every test cycle from NASA's end-of-trajectory labels.
+
+    For unit u with last observed cycle t_max and label R_u from RUL_FD00X.txt:
+        RUL(t) = R_u + (t_max - t)
+
+    Rows are matched to labels by sorted unit_id (official CMAPSS file order).
+    """
+    df = df.copy()
+    units = sorted(df["unit_id"].unique())
+    labels = rul_at_last_cycle.reset_index(drop=True)
+    if len(units) != len(labels):
+        raise ValueError(
+            f"Test units ({len(units)}) and RUL labels ({len(labels)}) length mismatch"
+        )
+    rul_end = pd.Series(labels.values, index=units)
+    max_cycle = df.groupby("unit_id")["cycle"].transform("max")
+    df["rul"] = df["unit_id"].map(rul_end) + (max_cycle - df["cycle"])
+    if cap is not None:
+        df["rul"] = df["rul"].clip(upper=cap)
+    return df
+
+
+def add_failure_horizon_labels(
+    df: pd.DataFrame,
+    horizons: list[int] | None = None,
+    rul_col: str = "rul",
+) -> pd.DataFrame:
+    """Add binary failure-within-horizon columns from RUL (e.g. failure_30)."""
+    df = df.copy()
+    for h in horizons or [30, 72]:
+        df[f"failure_{h}"] = (df[rul_col] <= h).astype(int)
     return df

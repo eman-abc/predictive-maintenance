@@ -32,3 +32,8 @@ models/*.pkl
 models/*.pt
 models/*.joblib
 !models/.gitkeep
+
+# Phase 2 preprocessor artifacts
+artifacts/*.joblib
+artifacts/*.json
+!artifacts/.gitkeep
