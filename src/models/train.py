@@ -27,12 +27,16 @@ def train_all(
     MODELS_DIR.mkdir(exist_ok=True)
 
     results = {}
+    label_cols = {
+        "unit_id", "cycle", "rul", "failure", "failure_30", "failure_72",
+        "op_cluster", "op_setting_1", "op_setting_2", "op_setting_3",
+    }
 
     if cmapss_path and Path(cmapss_path).exists():
         df = pd.read_parquet(cmapss_path)
         feature_cols = [
             c for c in df.columns
-            if c not in {"unit_id", "cycle", "rul", "failure"}
+            if c not in label_cols
             and df[c].dtype in ["float64", "int64"]
         ]
         X = df[feature_cols].fillna(0)
@@ -44,6 +48,14 @@ def train_all(
             mlflow.log_metrics(metrics)
             regressor.save(MODELS_DIR / "rul_rf_model.pkl")
             results["rul"] = metrics
+
+        if "failure_30" in df.columns:
+            with mlflow.start_run(run_name="failure_30_gbm"):
+                classifier = FailureClassifier(model_type="gbm")
+                metrics = classifier.fit(X, df["failure_30"])
+                mlflow.log_metrics(metrics)
+                classifier.save(MODELS_DIR / "failure_30_clf_model.pkl")
+                results["failure_30"] = metrics
 
     if ai4i_path and Path(ai4i_path).exists():
         df = pd.read_parquet(ai4i_path)
@@ -66,24 +78,24 @@ def train_all(
 
 
 def prepare_and_train(
+    cmapss_dataset: str = "FD001",
     cmapss_raw_dir: str = "./data/raw/cmapss",
     ai4i_raw_dir: str = "./data/raw/ai4i",
 ) -> dict:
-    """End-to-end: load raw data, engineer features, train models."""
+    """End-to-end: build processed CMAPSS data, engineer AI4I features, train models."""
     from src.ingestion.ai4i_loader import load_ai4i
-    from src.ingestion.cmapss_loader import compute_train_rul, load_cmapss_train
+    from src.ingestion.cmapss_pipeline import build_cmapss_dataset
+    from src.ingestion.feature_engineer import FeatureEngineer
 
     engineer = FeatureEngineer()
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-    cmapss_path = PROCESSED_DIR / "cmapss_features.parquet"
+    cmapss_path = PROCESSED_DIR / f"cmapss_{cmapss_dataset}_train.parquet"
     ai4i_path = PROCESSED_DIR / "ai4i_features.parquet"
 
     try:
-        cmapss_df = load_cmapss_train(cmapss_raw_dir)
-        cmapss_df = compute_train_rul(cmapss_df)
-        cmapss_df = engineer.engineer_cmapss(cmapss_df)
-        engineer.save_processed(cmapss_df, cmapss_path)
+        result = build_cmapss_dataset(cmapss_dataset, processed_dir=PROCESSED_DIR)
+        cmapss_path = Path(result["train_path"])
     except FileNotFoundError:
         cmapss_path = None
 
@@ -95,7 +107,7 @@ def prepare_and_train(
         ai4i_path = None
 
     return train_all(
-        str(cmapss_path) if cmapss_path and cmapss_path.exists() else None,
+        str(cmapss_path) if cmapss_path and Path(cmapss_path).exists() else None,
         str(ai4i_path) if ai4i_path and ai4i_path.exists() else None,
     )
 

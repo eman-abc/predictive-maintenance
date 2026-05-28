@@ -32,6 +32,11 @@ The training and test data are provided as text files with 26 space-separated co
 | 5 | `op_setting_3` | Operational setting 3 (e.g., throttle resolver angle). |
 | 6-26 | `sensor_1` to `sensor_21` | 21 distinct sensor measurements (temperatures, pressures, speeds, ratios) characterizing engine health. Contaminated with sensor noise. |
 
+## Phase 2 EDA (completed)
+
+- **Report:** [cmapss_phase2_preprocessing.md](../cmapss_phase2_preprocessing.md)
+- **Build:** `python scripts/build_cmapss_dataset.py --dataset FD001`
+
 ## Phase 1 EDA (completed)
 
 Full methodology, sensor keep/drop decisions, and pipeline configs:

@@ -201,12 +201,13 @@ We therefore report:
 | Justified preprocessing | Sensor drop lists + op-condition flags per subset |
 | RUL target | `rul_cap: 125` in configs; test RUL file validated |
 
-## 7. Next steps (Phase 2)
+## 7. Next steps (Phase 3)
 
-1. Implement `compute_test_rul()` — align `RUL_FD00X.txt` to every test cycle.
-2. Build leakage-safe normalization (per unit; cluster for FD002/004).
-3. Add delta, slope, and spectral features per config.
-4. Persist `data/processed/cmapss_{FD00X}_{train,test}_features.parquet`.
+1. Evaluate RUL on test set (last cycle per unit) with RMSE and NASA `rul_score`.
+2. Train/compare RF vs GBM vs LSTM; log all runs in MLflow.
+3. Wire predictions into alerts and Streamlit dashboard.
+
+Phase 2 details: [cmapss_phase2_preprocessing.md](cmapss_phase2_preprocessing.md)
 
 ## 8. References
 
