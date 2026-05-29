@@ -1,13 +1,24 @@
 """MLflow experiment comparison view."""
 
 import os
+import sys
 from pathlib import Path
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from dashboard.data_loader import load_phase3_summary, render_dataset_selector
 
 st.set_page_config(page_title="Model Metrics", layout="wide")
 st.title("Model Metrics")
+
+dataset_id = render_dataset_selector()
+summary = load_phase3_summary(dataset_id)
+if summary:
+    st.caption(f"Summary from **artifacts/cmapss_{dataset_id}_phase3_summary.json**")
+    st.json(summary)
 
 mlruns_path = Path(os.getenv("MLFLOW_TRACKING_URI", "./mlruns"))
 

@@ -23,6 +23,9 @@ class RiskAssessment:
     health_score: float
     alert_level: AlertLevel
     message: str
+    recommended_action: str = ""
+    risk_score: float = 0.0
+    time_to_failure_cycles: float = 0.0
 
 
 class ThresholdEngine:
@@ -55,19 +58,45 @@ class ThresholdEngine:
         asset_id: str,
         rul: float,
         failure_probability: float,
+        *,
+        anomaly_score: float = 0.0,
+        sensor_readings: dict[str, float] | None = None,
     ) -> RiskAssessment:
         """Determine alert level and generate human-readable message."""
-        health = self.compute_health_score(rul, failure_probability)
+        from src.alerts.alert_payload import recommended_maintenance_action
 
-        if rul <= self.rul_critical or failure_probability >= self.prob_critical:
+        health = self.compute_health_score(rul, failure_probability)
+        sensor_readings = sensor_readings or {}
+
+        if (
+            rul <= self.rul_critical
+            or failure_probability >= self.prob_critical
+            or (anomaly_score >= 75 and rul <= self.rul_warning)
+        ):
             level = AlertLevel.CRITICAL
-            message = f"Asset {asset_id}: immediate maintenance required (RUL={rul:.0f}, P(fail)={failure_probability:.0%})"
-        elif rul <= self.rul_warning or failure_probability >= self.prob_warning:
+            message = (
+                f"Asset {asset_id}: immediate maintenance required "
+                f"(RUL={rul:.0f} cycles, P(fail≤30)={failure_probability:.0%}, "
+                f"anomaly={anomaly_score:.0f})"
+            )
+        elif (
+            rul <= self.rul_warning
+            or failure_probability >= self.prob_warning
+            or anomaly_score >= 55
+        ):
             level = AlertLevel.WARNING
-            message = f"Asset {asset_id}: schedule maintenance soon (RUL={rul:.0f}, P(fail)={failure_probability:.0%})"
+            message = (
+                f"Asset {asset_id}: schedule maintenance soon "
+                f"(RUL={rul:.0f} cycles, P(fail≤30)={failure_probability:.0%}, "
+                f"anomaly={anomaly_score:.0f})"
+            )
         else:
             level = AlertLevel.NORMAL
             message = f"Asset {asset_id}: operating normally (health={health:.0f}%)"
+
+        action = recommended_maintenance_action(
+            level, rul, failure_probability, anomaly_score=anomaly_score
+        )
 
         return RiskAssessment(
             asset_id=asset_id,
@@ -76,4 +105,7 @@ class ThresholdEngine:
             health_score=health,
             alert_level=level,
             message=message,
+            recommended_action=action,
+            risk_score=health,
+            time_to_failure_cycles=rul,
         )

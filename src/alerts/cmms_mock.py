@@ -19,12 +19,23 @@ class CMMSClient:
         self.api_key = api_key or os.getenv("CMMS_API_KEY", "")
 
     def create_work_order(self, alert: Alert) -> dict[str, Any]:
-        """Submit a work order derived from an alert payload."""
+        """Submit a work order derived from a UC5-complete alert payload."""
+        meta = alert.metadata or {}
         payload = {
             "asset_id": alert.asset_id,
-            "priority": "high" if alert.level.value == "critical" else "medium",
-            "description": alert.description,
             "alert_id": alert.alert_id,
+            "priority": "high" if alert.level.value == "critical" else "medium",
+            "escalation_tier": meta.get("escalation_tier", alert.level.value),
+            "description": alert.description,
+            "recommended_action": meta.get(
+                "recommended_action", alert.description
+            ),
+            "risk_score": meta.get("risk_score", alert.health_score),
+            "time_to_failure_cycles": meta.get("time_to_failure_cycles", alert.rul),
+            "failure_probability_30": alert.failure_probability,
+            "failure_probability_72": meta.get("failure_prob_72"),
+            "anomaly_score": meta.get("anomaly_score"),
+            "sensor_readings": meta.get("sensor_readings", {}),
             "health_score": alert.health_score,
             "predicted_rul": alert.rul,
         }

@@ -1,42 +1,67 @@
-"""Per-asset deep-dive view."""
+"""Per-asset deep-dive using test trajectory + Phase 3 predictions."""
 
 import sys
 from pathlib import Path
 
-import streamlit as st
 import pandas as pd
-import numpy as np
+import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dashboard.components.health_gauge import render_health_gauge
 from dashboard.components.rul_chart import render_rul_chart
 from dashboard.components.sensor_chart import render_sensor_chart
+from dashboard.data_loader import (
+    load_fleet_predictions,
+    load_unit_trajectory,
+    render_dataset_selector,
+)
 
 st.set_page_config(page_title="Asset Detail", layout="wide")
 st.title("Asset Detail")
 
-asset_id = st.selectbox("Select Asset", [f"ENG-{i:03d}" for i in range(1, 21)])
+dataset_id = render_dataset_selector()
+fleet = load_fleet_predictions(dataset_id)
+if fleet is None:
+    st.warning(
+        f"Run Phase 3 for {dataset_id}: "
+        f"`python scripts/train_cmapss_phase3.py --dataset {dataset_id}`"
+    )
+    st.stop()
 
-np.random.seed(int(asset_id.split("-")[1]))
-cycles = np.arange(1, 101)
-rul = np.maximum(125 - cycles + np.random.normal(0, 3, len(cycles)), 0)
-health = max(0, min(100, rul[-1] / 125 * 100))
+assets = sorted(fleet["asset_id"].tolist())
+asset_id = st.selectbox("Select Asset", assets)
+unit_id = int(asset_id.split("-")[1])
+
+row = fleet[fleet["asset_id"] == asset_id].iloc[0]
+trajectory = load_unit_trajectory(unit_id, dataset_id)
 
 col1, col2 = st.columns([1, 2])
 with col1:
-    render_health_gauge(health, title=f"{asset_id} Health")
-    st.metric("Predicted RUL", f"{rul[-1]:.0f} cycles")
-    st.metric("Failure Probability", f"{np.random.uniform(0.05, 0.4):.0%}")
+    render_health_gauge(float(row["health_score"]), title=f"{asset_id} Health")
+    st.metric("Predicted RUL", f"{row['rul_pred']:.0f} cycles")
+    st.metric("True RUL (last cycle)", f"{row['rul_true']:.0f} cycles")
+    st.metric("P(failure ≤30 cycles)", f"{row.get('failure_prob_30', row['failure_prob']):.0%}")
+    if "failure_prob_72" in row.index:
+        st.metric("P(failure ≤72 cycles)", f"{row['failure_prob_72']:.0%}")
+    if "anomaly_score" in row.index:
+        st.metric("Anomaly score", f"{row['anomaly_score']:.1f}")
+        st.caption(
+            "Isolation Forest vs healthy training cycles (RUL≥30). "
+            f"Flagged: {'yes' if row.get('is_anomaly', 0) else 'no'}"
+        )
+    st.metric("Alert Level", row["alert_level"].upper())
 
 with col2:
-    trend_df = pd.DataFrame({"cycle": cycles, "rul": rul})
-    render_rul_chart(trend_df, asset_id)
+    if trajectory is not None and "rul" in trajectory.columns:
+        trend_df = trajectory[["cycle", "rul"]].copy()
+        trend_df["rul_predicted_endpoint"] = float(row["rul_pred"])
+        render_rul_chart(trend_df, asset_id)
+    else:
+        st.info("Trajectory data unavailable.")
 
-sensor_df = pd.DataFrame({
-    "cycle": cycles,
-    "sensor_1": 600 + cycles * 0.5 + np.random.normal(0, 2, len(cycles)),
-    "sensor_2": 1400 + cycles * 1.2 + np.random.normal(0, 5, len(cycles)),
-    "sensor_3": 1100 - cycles * 0.8 + np.random.normal(0, 3, len(cycles)),
-})
-render_sensor_chart(sensor_df, asset_id)
+if trajectory is not None:
+    sensor_cols = [c for c in trajectory.columns if c.startswith("sensor_")][:3]
+    if sensor_cols:
+        sensor_df = trajectory[["cycle"] + sensor_cols]
+        render_sensor_chart(sensor_df, asset_id)

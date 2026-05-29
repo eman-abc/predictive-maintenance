@@ -166,14 +166,13 @@ Re-run `build_cmapss_dataset.py` after code changes to refresh counts.
 
 ---
 
-## 6. How training uses Phase 2 outputs
+## 6. How Phase 3 uses Phase 2 outputs
 
-`python -m src.models.train` now calls `build_cmapss_dataset("FD001")` and trains:
+```bash
+python scripts/train_cmapss_phase3.py --dataset FD001
+```
 
-- **RUL regressor** on `cmapss_FD001_train.parquet`
-- **Failure classifier** (`failure_30`) on the same features
-
-Next (Phase 3): evaluate on `cmapss_FD001_test.parquet` last cycle per unit with NASA score.
+See [cmapss_phase3_modeling.md](cmapss_phase3_modeling.md).
 
 ---
 

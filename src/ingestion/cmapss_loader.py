@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 CMAPSS_COLUMNS = [
@@ -36,7 +37,10 @@ CMAPSS_COLUMNS = [
 
 def _read_space_separated(path: Path) -> pd.DataFrame:
     """Read a CMAPSS space-delimited file into a DataFrame."""
-    return pd.read_csv(path, sep=r"\s+", header=None, names=CMAPSS_COLUMNS)
+    df = pd.read_csv(path, sep=r"\s+", header=None, names=CMAPSS_COLUMNS)
+    sensor_cols = [c for c in CMAPSS_COLUMNS if c.startswith("sensor_")]
+    df[sensor_cols] = df[sensor_cols].astype(np.float64)
+    return df
 
 
 def load_cmapss_train(data_dir: str | Path, dataset: str = "FD001") -> pd.DataFrame:

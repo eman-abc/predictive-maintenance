@@ -56,6 +56,11 @@ class AlertGenerator:
             health_score=assessment.health_score,
             rul=assessment.rul,
             failure_probability=assessment.failure_probability,
+            metadata={
+                "risk_score": assessment.risk_score,
+                "time_to_failure_cycles": assessment.time_to_failure_cycles,
+                "recommended_action": assessment.recommended_action,
+            },
         )
 
     def batch_from_assessments(

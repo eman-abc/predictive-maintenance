@@ -28,6 +28,14 @@ def test_warning_assessment(engine):
 def test_critical_assessment(engine):
     result = engine.assess("ENG-003", rul=5, failure_probability=0.9)
     assert result.alert_level == AlertLevel.CRITICAL
+    assert result.recommended_action
+    assert result.risk_score == result.health_score
+    assert result.time_to_failure_cycles == 5
+
+
+def test_recommended_action_on_warning(engine):
+    result = engine.assess("ENG-006", rul=25, failure_probability=0.3)
+    assert "maintenance" in result.recommended_action.lower()
 
 
 def test_alert_generator_skips_normal(engine):

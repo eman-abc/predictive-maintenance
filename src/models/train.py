@@ -113,4 +113,12 @@ def prepare_and_train(
 
 
 if __name__ == "__main__":
-    prepare_and_train()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "phase3":
+        from src.models.cmapss_phase3 import run_phase3
+
+        dataset = sys.argv[2] if len(sys.argv) > 2 else "FD001"
+        print(run_phase3(dataset))
+    else:
+        prepare_and_train()

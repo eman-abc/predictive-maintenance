@@ -36,7 +36,11 @@ class CmapssPreprocessor:
 
     def _drop_sensors(self, df: pd.DataFrame) -> pd.DataFrame:
         cols = [c for c in self.drop_sensors if c in df.columns]
-        return df.drop(columns=cols, errors="ignore")
+        df = df.drop(columns=cols, errors="ignore")
+        present = [c for c in self.sensor_cols if c in df.columns]
+        if present:
+            df[present] = df[present].astype(np.float64)
+        return df
 
     def fit_op_clusters(self, train: pd.DataFrame) -> None:
         if not self.cluster_for_normalization:
