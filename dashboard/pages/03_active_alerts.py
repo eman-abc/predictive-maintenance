@@ -1,19 +1,16 @@
 """Active alerts from Phase 3 fleet predictions (UC5 Component C)."""
 
 import json
-import sys
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from dashboard.data_loader import load_fleet_predictions, render_dataset_selector
+from dashboard.page_init import init_page
 from src.alerts.alert_payload import fleet_row_to_alert
 from src.alerts.cmms_mock import CMMSClient
 
 st.set_page_config(page_title="Active Alerts", layout="wide")
+init_page()
 st.title("Active Alerts")
 
 dataset_id = render_dataset_selector()

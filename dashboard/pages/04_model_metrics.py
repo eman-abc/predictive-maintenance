@@ -1,17 +1,15 @@
 """MLflow experiment comparison view."""
 
 import os
-import sys
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from dashboard.data_loader import load_phase3_summary, render_dataset_selector
+from dashboard.page_init import init_page
 
 st.set_page_config(page_title="Model Metrics", layout="wide")
+init_page()
 st.title("Model Metrics")
 
 dataset_id = render_dataset_selector()

@@ -1,6 +1,10 @@
 """Ollama / HuggingFace API wrapper for maintenance briefings."""
 
+from __future__ import annotations
+
+import json
 import os
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -30,19 +34,23 @@ class OllamaClient:
 
     def _generation_options(self) -> dict[str, Any]:
         return {
-            "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "400")),
-            "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.4")),
+            "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "120")),
+            "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.3")),
+            "top_p": float(os.getenv("OLLAMA_TOP_P", "0.85")),
+            "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "2048")),
+        }
+
+    def _base_payload(self, *, stream: bool) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "stream": stream,
+            "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+            "options": self._generation_options(),
         }
 
     def generate(self, prompt: str, system: str | None = None) -> str:
         """Send a completion request to Ollama."""
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "10m"),
-            "options": self._generation_options(),
-        }
+        payload: dict[str, Any] = {**self._base_payload(stream=False), "prompt": prompt}
         if system:
             payload["system"] = system
 
@@ -51,14 +59,32 @@ class OllamaClient:
             response.raise_for_status()
             return response.json().get("response", "")
 
+    def generate_stream(self, prompt: str, system: str | None = None) -> Iterator[str]:
+        """Stream tokens from Ollama (faster perceived response in the UI)."""
+        payload: dict[str, Any] = {**self._base_payload(stream=True), "prompt": prompt}
+        if system:
+            payload["system"] = system
+
+        with httpx.Client(timeout=self._http_timeout()) as client:
+            with client.stream(
+                "POST", f"{self.base_url}/api/generate", json=payload
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    if text := chunk.get("response"):
+                        yield text
+                    if chunk.get("done"):
+                        break
+
     def warmup(self) -> None:
         """Load the model into memory so the first user-facing call is faster."""
         payload = {
-            "model": self.model,
+            **self._base_payload(stream=False),
             "prompt": "ok",
-            "stream": False,
-            "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "10m"),
-            "options": {"num_predict": 1},
+            "options": {"num_predict": 1, "num_ctx": 512},
         }
         with httpx.Client(timeout=self._http_timeout()) as client:
             response = client.post(f"{self.base_url}/api/generate", json=payload)
@@ -67,11 +93,8 @@ class OllamaClient:
     def chat(self, messages: list[dict[str, str]]) -> str:
         """Send a chat completion request to Ollama."""
         payload = {
-            "model": self.model,
+            **self._base_payload(stream=False),
             "messages": messages,
-            "stream": False,
-            "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "10m"),
-            "options": self._generation_options(),
         }
 
         with httpx.Client(timeout=self._http_timeout()) as client:

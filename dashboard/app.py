@@ -1,17 +1,13 @@
 """Industrial Predictive Maintenance System — Streamlit Dashboard."""
 
-import sys
-from pathlib import Path
-
 import streamlit as st
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dashboard.data_loader import (
     load_fleet_predictions,
     load_phase3_summary,
     render_dataset_selector,
 )
+from dashboard.page_init import init_page  # noqa: E402 — after streamlit import
 
 st.set_page_config(
     page_title="Predictive Maintenance",
@@ -19,6 +15,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+init_page()
 
 st.title("Industrial Predictive Maintenance System")
 st.markdown(

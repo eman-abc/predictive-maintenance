@@ -1,14 +1,10 @@
 """Per-asset deep-dive using test trajectory + Phase 3 predictions."""
 
-import sys
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from dashboard.components.briefing_panel import render_asset_briefing
+from dashboard.page_init import init_page
 from dashboard.components.health_gauge import render_health_gauge
 from dashboard.components.rul_chart import render_rul_chart
 from dashboard.components.sensor_chart import render_sensor_chart
@@ -19,6 +15,7 @@ from dashboard.data_loader import (
 )
 
 st.set_page_config(page_title="Asset Detail", layout="wide")
+init_page()
 st.title("Asset Detail")
 
 dataset_id = render_dataset_selector()
