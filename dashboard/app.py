@@ -26,7 +26,7 @@ st.markdown(
 Welcome to the fleet health monitoring dashboard. Use the sidebar to navigate:
 
 - **Fleet Overview** — health scores across all test engines
-- **Asset Detail** — per-asset sensor trends and RUL
+- **Asset Detail** — per-asset sensor trends, RUL, and Ollama maintenance briefings
 - **Active Alerts** — maintenance alerts from model predictions
 - **Model Metrics** — MLflow experiment runs (Phase 3)
 """

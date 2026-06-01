@@ -8,6 +8,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from dashboard.components.briefing_panel import render_asset_briefing
 from dashboard.components.health_gauge import render_health_gauge
 from dashboard.components.rul_chart import render_rul_chart
 from dashboard.components.sensor_chart import render_sensor_chart
@@ -65,3 +66,6 @@ if trajectory is not None:
     if sensor_cols:
         sensor_df = trajectory[["cycle"] + sensor_cols]
         render_sensor_chart(sensor_df, asset_id)
+
+st.divider()
+render_asset_briefing(row, dataset_id=dataset_id)
