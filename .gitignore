@@ -3,6 +3,7 @@ data/raw/
 data/processed/*.parquet
 data/synthetic/*.parquet
 mlruns/
+mlflow.db
 
 # Environment
 .env
