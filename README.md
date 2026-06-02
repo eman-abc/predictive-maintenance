@@ -52,7 +52,7 @@ Place files in the following directories:
 
 | Dataset | Source | Files |
 |---------|--------|-------|
-| CMAPSS | [NASA Prognostics Data Repository](https://ti.arc.nasa.gov/tech/dash/groups/pcoe/prognostic-data-repository/) | `train_FD00X.txt`, `test_FD00X.txt`, `RUL_FD00X.txt` (X=001–004) → `data/raw/cmapss/` |
+| CMAPSS | [NASA Prognostics Data Repository](https://data.nasa.gov/dataset/cmapss-jet-engine-simulated-data) or `python scripts/download_cmapss_data.py` | `train_FD00X.txt`, `test_FD00X.txt`, `RUL_FD00X.txt` (X=001–004) → `data/raw/cmapss/` |
 | AI4I 2020 | [UCI ML Repository](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset) | `ai4i2020.csv` → `data/raw/ai4i/` |
 
 ### 4. Build features and train (CMAPSS)

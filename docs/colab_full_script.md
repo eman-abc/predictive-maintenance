@@ -1,19 +1,20 @@
-# Colab — full script (copy-paste)
+# Colab — full script (upload CMAPSS to SSD)
 
-Open [notebooks/cmapss_colab_train_all.ipynb](../notebooks/cmapss_colab_train_all.ipynb) in Colab (**File → Upload notebook**), or paste the cells below.
+Open [notebooks/cmapss_colab_train_all.ipynb](../notebooks/cmapss_colab_train_all.ipynb) in Colab.
 
-**Set your repo URL in the first code cell**, then run all cells.
+Put the 12 NASA files on Colab disk at **`/content/cmapss_upload/`**, then run the notebook.
 
 ---
 
 ## Cell 1 — Config
 
 ```python
-REPO_URL = "https://github.com/YOUR_USERNAME/predictive-maintenance.git"
+REPO_URL = "https://github.com/eman-abc/predictive-maintenance.git"
 REPO_DIR = "/content/predictive-maintenance"
 BRANCH = "main"
-TRAIN_MODE = "fast"  # "fast" or "full"
+TRAIN_MODE = "fast"
 LSTM_EPOCHS = 10
+CMAPSS_UPLOAD_DIR = "/content/cmapss_upload"
 ```
 
 ---
@@ -24,15 +25,10 @@ LSTM_EPOCHS = 10
 import shutil
 from pathlib import Path
 
-if "YOUR_USERNAME" in REPO_URL:
-    raise ValueError("Set REPO_URL to your GitHub HTTPS URL.")
-
 if Path(REPO_DIR).exists():
     shutil.rmtree(REPO_DIR)
-
 !git clone --branch {BRANCH} --depth 1 {REPO_URL} {REPO_DIR}
 %cd {REPO_DIR}
-print("CWD:", Path.cwd())
 ```
 
 ---
@@ -44,96 +40,70 @@ print("CWD:", Path.cwd())
 %pip install -q -r requirements.txt
 ```
 
+---
+
+## Cell 4 — Prepare upload folder on Colab SSD
+
 ```python
-import torch
 from pathlib import Path
-assert Path("scripts/cmapss_colab_train.py").exists()
-print("GPU:", torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
+UPLOAD_DIR = Path(CMAPSS_UPLOAD_DIR)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+print(UPLOAD_DIR, list(UPLOAD_DIR.glob("*.txt")))
 ```
 
 ---
 
-## Cell 4 — Download CMAPSS
+## Cell 5 — Upload from your PC (file picker)
 
 ```python
-import urllib.request
-from pathlib import Path
+from google.colab import files
+uploaded = files.upload()  # select all 12 .txt files
+for name, data in uploaded.items():
+    (UPLOAD_DIR / name).write_bytes(data)
+    print(name, len(data))
+```
 
-RAW = Path("data/raw/cmapss")
-RAW.mkdir(parents=True, exist_ok=True)
-BASE = "https://raw.githubusercontent.com/kpzhang93/DTAFM/master/CMAPSSData"
+**Or** use Colab left sidebar **Files** → upload into `/content/cmapss_upload/` and skip this cell.
 
-for fd in ["FD001", "FD002", "FD003", "FD004"]:
-    for prefix in ("train", "test", "RUL"):
-        name = f"{prefix}_{fd}.txt"
-        dest = RAW / name
-        if not dest.exists() or dest.stat().st_size < 100:
-            urllib.request.urlretrieve(f"{BASE}/{name}", dest)
-        print("ok", name)
+---
+
+## Cell 6 — (Optional) Unzip NASA archive
+
+```python
+import zipfile
+for z in Path("/content").glob("*.zip"):
+    with zipfile.ZipFile(z) as zf:
+        zf.extractall(UPLOAD_DIR)
 ```
 
 ---
 
-## Cell 5 — Train (Phase 2 + Phase 3 + MLflow)
+## Cell 7 — Import into project
+
+```python
+!python scripts/import_cmapss_upload.py --source /content/cmapss_upload
+```
+
+---
+
+## Cell 8 — Train (MLflow)
 
 ```python
 import os
-os.environ["MLFLOW_TRACKING_URI"] = "./mlruns"
-os.environ["MLFLOW_EXPERIMENT_NAME"] = "predictive_maintenance"
-
-if TRAIN_MODE == "fast":
-    !python scripts/cmapss_colab_train.py --fast
-else:
-    !python scripts/cmapss_colab_train.py --lstm-epochs {LSTM_EPOCHS}
+os.environ["CMAPSS_UPLOAD_DIR"] = CMAPSS_UPLOAD_DIR
+!python scripts/cmapss_colab_train.py --fast --upload-dir /content/cmapss_upload
 ```
 
 ---
 
-## Cell 6 — Verify
+## Cell 9 — Verify + download zip
 
 ```python
 !python scripts/report_cmapss_mlflow.py
 ```
 
 ```python
-import json
-from pathlib import Path
-import mlflow
-import pandas as pd
-from mlflow.tracking import MlflowClient
-
-mlflow.set_tracking_uri("file://" + str(Path.cwd() / "mlruns"))
-exp = MlflowClient().get_experiment_by_name("predictive_maintenance")
-runs = MlflowClient().search_runs([exp.experiment_id], max_results=50)
-rows = [{
-    "dataset": r.data.params.get("dataset_id"),
-    "winner": r.data.params.get("winner"),
-    "test_rmse": r.data.metrics.get("test_rmse"),
-    "test_nasa": r.data.metrics.get("test_rul_score"),
-} for r in runs if (r.info.run_name or "").endswith("_phase3_summary")]
-display(pd.DataFrame(rows).sort_values("dataset"))
-```
-
----
-
-## Cell 7 — Download zip
-
-```python
-from pathlib import Path
 from google.colab import files
-
 !zip -qr cmapss_colab_outputs.zip mlruns models artifacts data/processed
 files.download("cmapss_colab_outputs.zip")
-```
-
----
-
-## After download (local PC)
-
-Unzip into your project root, then:
-
-```bash
-python scripts/report_cmapss_mlflow.py
-mlflow ui --backend-store-uri ./mlruns
-streamlit run dashboard/app.py
 ```
