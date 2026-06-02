@@ -20,48 +20,51 @@ def registry_enabled() -> bool:
     )
 
 
-def use_legacy_model_registry() -> bool:
-    """Workspace Model Registry (short names). Set MLFLOW_USE_LEGACY_MODEL_REGISTRY=1."""
-    return os.getenv("MLFLOW_USE_LEGACY_MODEL_REGISTRY", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+def _use_unity_catalog_registry() -> bool:
+    """Databricks workspaces with legacy registry disabled require UC three-level names."""
+    uri = os.getenv("MLFLOW_REGISTRY_URI", "").strip().lower()
+    if uri in ("databricks-uc", "uc"):
+        return True
+    if uri == "databricks":
+        return False
+    if os.getenv("MLFLOW_USE_UC_REGISTRY", "").lower() in ("1", "true", "yes"):
+        return True
+    if os.getenv("MLFLOW_UC_CATALOG", "").strip():
+        return True
+    return os.getenv("MLFLOW_TRACKING_URI", "").strip().lower() == "databricks"
 
 
-def _short_model_name(role: str, dataset_id: str, *, variant: str | None = None) -> str:
-    parts = ["cmapss", role]
-    if variant:
-        parts.append(variant)
-    parts.append(dataset_id)
-    return "_".join(parts)
+def setup_model_registry_uri() -> str:
+    """Call before log_model/register on Databricks."""
+    import mlflow
+
+    if _use_unity_catalog_registry():
+        mlflow.set_registry_uri("databricks-uc")
+        return "databricks-uc"
+    legacy = os.getenv("MLFLOW_REGISTRY_URI", "databricks")
+    mlflow.set_registry_uri(legacy)
+    return legacy
 
 
 def registered_model_name(role: str, dataset_id: str, *, variant: str | None = None) -> str:
     """
-    Registered model name for MLflow.
+    Model Registry name.
 
-    - Unity Catalog (default on new Databricks): ``catalog.schema.cmapss_rul_gbm_FD001``
-    - Legacy workspace registry: ``cmapss_rul_gbm_FD001`` (set MLFLOW_USE_LEGACY_MODEL_REGISTRY=1)
+    Unity Catalog (required on most Databricks workspaces):
+      ``{catalog}.{schema}.cmapss_rul_gbm_FD001``
+    Legacy workspace registry (rare):
+      ``cmapss_rul_gbm_FD001``
     """
-    short = _short_model_name(role, dataset_id, variant=variant)
-    if use_legacy_model_registry():
-        return short
-    catalog = os.getenv("MLFLOW_UC_CATALOG", "main").strip()
-    schema = os.getenv("MLFLOW_UC_SCHEMA", "default").strip()
-    return f"{catalog}.{schema}.{short}"
-
-
-def configure_model_registry() -> str:
-    """Set registry URI before log_model(registered_model_name=...). Returns active URI."""
-    import mlflow
-
-    if use_legacy_model_registry():
-        uri = "databricks"
-    else:
-        uri = os.getenv("MLFLOW_REGISTRY_URI", "databricks-uc").strip() or "databricks-uc"
-    mlflow.set_registry_uri(uri)
-    return uri
+    parts = ["cmapss", role]
+    if variant:
+        parts.append(variant)
+    parts.append(dataset_id)
+    short = "_".join(parts)
+    if _use_unity_catalog_registry():
+        catalog = os.getenv("MLFLOW_UC_CATALOG", "main").strip()
+        schema = os.getenv("MLFLOW_UC_SCHEMA", "default").strip()
+        return f"{catalog}.{schema}.{short}"
+    return short
 
 
 def _log_sklearn(
@@ -173,12 +176,7 @@ def register_phase3_models(
     if not registry_enabled():
         return {}
 
-    registry_uri = configure_model_registry()
-    print(
-        f"[{dataset_id}] Model registry URI={registry_uri!r} "
-        f"(legacy names={use_legacy_model_registry()})",
-        flush=True,
-    )
+    setup_model_registry_uri()
 
     registered: dict[str, dict[str, str]] = {}
     meta = {

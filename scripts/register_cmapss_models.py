@@ -26,7 +26,11 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 from src.ingestion.cmapss_config import CMAPSS_DATASET_IDS  # noqa: E402
-from src.models.mlflow_registry import register_models_from_disk, registry_enabled  # noqa: E402
+from src.models.mlflow_registry import (  # noqa: E402
+    register_models_from_disk,
+    registry_enabled,
+    setup_model_registry_uri,
+)
 
 
 def main() -> None:
@@ -70,13 +74,15 @@ def main() -> None:
 
     import mlflow
 
-    from src.models.mlflow_registry import configure_model_registry, use_legacy_model_registry
-
     uri = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"))
-    reg_uri = configure_model_registry()
-    print(f"Model registry: {reg_uri} (legacy={use_legacy_model_registry()})", flush=True)
+    reg_uri = setup_model_registry_uri()
+    print(f"MLflow registry URI: {reg_uri}", flush=True)
+    if reg_uri == "databricks-uc":
+        cat = os.getenv("MLFLOW_UC_CATALOG", "main")
+        sch = os.getenv("MLFLOW_UC_SCHEMA", "default")
+        print(f"UC model names: {cat}.{sch}.cmapss_<role>_FD00X", flush=True)
 
     all_registered: dict[str, dict] = {}
     for ds in datasets:
