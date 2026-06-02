@@ -75,12 +75,10 @@ def main() -> None:
 
     raw = ROOT / "data" / "raw" / "cmapss"
     if not (raw / "train_FD001.txt").exists():
-        print(
-            "ERROR: Missing data/raw/cmapss/train_FD001.txt\n"
-            "Run the download cell in notebooks/cmapss_colab_train_all.ipynb first.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        print("Downloading CMAPSS raw files…", flush=True)
+        from src.ingestion.cmapss_download import download_cmapss_raw
+
+        download_cmapss_raw(raw)
 
     if not args.skip_build:
         for ds in args.datasets:

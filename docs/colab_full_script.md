@@ -56,21 +56,10 @@ print("GPU:", torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.
 ## Cell 4 — Download CMAPSS
 
 ```python
-import urllib.request
-from pathlib import Path
-
-RAW = Path("data/raw/cmapss")
-RAW.mkdir(parents=True, exist_ok=True)
-BASE = "https://raw.githubusercontent.com/kpzhang93/DTAFM/master/CMAPSSData"
-
-for fd in ["FD001", "FD002", "FD003", "FD004"]:
-    for prefix in ("train", "test", "RUL"):
-        name = f"{prefix}_{fd}.txt"
-        dest = RAW / name
-        if not dest.exists() or dest.stat().st_size < 100:
-            urllib.request.urlretrieve(f"{BASE}/{name}", dest)
-        print("ok", name)
+!python scripts/download_cmapss_data.py
 ```
+
+If download fails, upload `train_*.txt`, `test_*.txt`, and `RUL_*.txt` into `data/raw/cmapss/` (from [NASA CMAPSS](https://data.nasa.gov/dataset/cmapss-jet-engine-simulated-data)).
 
 ---
 
