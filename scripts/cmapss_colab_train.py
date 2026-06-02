@@ -62,6 +62,11 @@ def main() -> None:
         action="store_true",
         help="Download from mirror if raw files missing (default: require upload)",
     )
+    parser.add_argument(
+        "--mlflow-databricks",
+        action="store_true",
+        help="Require DATABRICKS_HOST + DATABRICKS_TOKEN in environment",
+    )
     args = parser.parse_args()
 
     if os.getenv("CMAPSS_COLAB_SKIP_BUILD", "").lower() in ("1", "true", "yes"):
@@ -75,7 +80,24 @@ def main() -> None:
     lstm_epochs = 5 if args.fast else args.lstm_epochs
 
     os.chdir(ROOT)
+
+    tracking = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
+    if args.mlflow_databricks or tracking == "databricks":
+        host = os.getenv("DATABRICKS_HOST", "")
+        token = os.getenv("DATABRICKS_TOKEN", "")
+        if not host or not token:
+            print(
+                "ERROR: Set DATABRICKS_HOST and DATABRICKS_TOKEN before training.\n"
+                "  python scripts/configure_mlflow_databricks.py --host https://... "
+                "--token <PAT> --smoke-test",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        os.environ["MLFLOW_TRACKING_URI"] = "databricks"
+        tracking = "databricks"
+
     print(f"Project root: {ROOT}")
+    print(f"MLflow tracking: {tracking} -> {os.getenv('MLFLOW_EXPERIMENT_NAME', 'predictive_maintenance')}")
     print(_cuda_info())
     print(
         f"Mode: {'fast' if args.fast else 'full'} | skip_lstm={skip_lstm} | "
@@ -113,8 +135,12 @@ def main() -> None:
         cwd=str(ROOT),
         check=False,
     )
-    print(f"\nMLflow runs: {ROOT / 'mlruns'}")
-    print("Download mlruns/, models/, artifacts/, data/processed/*_predictions.parquet")
+    if os.getenv("MLFLOW_TRACKING_URI") == "databricks":
+        print(f"\nMLflow runs: Databricks workspace {os.getenv('DATABRICKS_HOST')}")
+        print("  UI: Machine Learning → Experiments →", os.getenv("MLFLOW_EXPERIMENT_NAME"))
+    else:
+        print(f"\nMLflow runs: {ROOT / 'mlruns'}")
+    print("Download models/, artifacts/, data/processed/*_predictions.parquet (mlruns/ only if local)")
 
 
 if __name__ == "__main__":
