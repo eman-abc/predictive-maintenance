@@ -70,7 +70,10 @@ class SurvivalModel:
         """RUL proxy: median lifetime minus current cycle, clipped at zero."""
         median_life = self.predict_median_lifetime(df)
         current = np.asarray(current_cycles, dtype=float)
-        return np.maximum(median_life - current, 0.0)
+        # lifelines may return inf when median survival is undefined (censored test engines)
+        cap = np.where(np.isfinite(median_life), median_life, current + 200.0)
+        cap = np.where(np.isfinite(cap), cap, current + 200.0)
+        return np.maximum(cap - current, 0.0)
 
     def predict_survival_probability(
         self,

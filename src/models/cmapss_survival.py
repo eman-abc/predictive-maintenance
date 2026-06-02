@@ -46,7 +46,12 @@ def evaluate_cox_rul(
     concordance: float | None = None,
 ) -> dict[str, float]:
     """NASA/RMSE on RUL proxy plus optional lifelines concordance."""
-    metrics = evaluate_rul(y_true, y_pred)
+    y_pred = np.asarray(y_pred, dtype=float)
+    y_true = np.asarray(y_true, dtype=float)
+    finite = np.isfinite(y_pred) & np.isfinite(y_true)
+    if not finite.any():
+        return {"rmse": float("nan"), "mae": float("nan"), "rul_score": float("nan")}
+    metrics = evaluate_rul(y_true[finite], y_pred[finite])
     if concordance is not None and np.isfinite(concordance):
         metrics["concordance"] = float(concordance)
     return metrics

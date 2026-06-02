@@ -53,7 +53,7 @@ def _log_sklearn(
 
     info = mlflow.sklearn.log_model(
         sk_model=sk_model,
-        artifact_path=f"registry/{name}",
+        name=name,
         registered_model_name=name,
         signature=signature,
         input_example=X.head(3),
@@ -101,7 +101,7 @@ def _log_survival_pyfunc(
         info = mlflow.pyfunc.log_model(
             python_model=SurvivalPyFunc(),
             artifacts={"bundle": str(path.resolve())},
-            artifact_path=f"registry/{name}",
+            name=name,
             registered_model_name=name,
             metadata=metadata,
         )
@@ -145,14 +145,14 @@ def register_phase3_models(
         "pipeline": "cmapss_phase3",
     }
 
-    try:
-        if winner == "lstm" and hasattr(best_rul, "net"):
-            import mlflow.pytorch
+    if winner == "lstm" and hasattr(best_rul, "net"):
+        import mlflow.pytorch
 
-            name = registered_model_name("rul", dataset_id, variant="lstm")
+        name = registered_model_name("rul", dataset_id, variant="lstm")
+        try:
             info = mlflow.pytorch.log_model(
                 pytorch_model=best_rul.net,
-                artifact_path=f"registry/{name}",
+                name=name,
                 registered_model_name=name,
                 metadata={
                     **meta,
@@ -166,61 +166,64 @@ def register_phase3_models(
                 "version": str(getattr(info, "registered_model_version", "")),
                 "model_uri": getattr(info, "model_uri", ""),
             }
-        elif hasattr(best_rul, "model"):
-            name = registered_model_name("rul", dataset_id, variant=winner)
-            entry = _log_sklearn(
-                best_rul.model,
-                name,
-                feature_cols=feature_cols,
-                sample_df=sample_df,
-                extra_metadata={**meta, "winner": winner, "role": "rul"},
-            )
-            if entry:
-                registered["rul"] = entry
+        except Exception as exc:
+            print(f"  Registry skip {name}: {exc}", flush=True)
 
-        for role, clf in (("failure_30", failure_clf), ("failure_72", failure_clf_72)):
-            name = registered_model_name(role, dataset_id)
-            entry = _log_sklearn(
-                clf.model,
-                name,
-                feature_cols=feature_cols,
-                sample_df=sample_df,
-                extra_metadata={**meta, "role": role},
-            )
-            if entry:
-                registered[role] = entry
-
-        name = registered_model_name("anomaly", dataset_id)
+    elif hasattr(best_rul, "model"):
+        name = registered_model_name("rul", dataset_id, variant=winner)
         entry = _log_sklearn(
-            anomaly_det.model,
+            best_rul.model,
             name,
             feature_cols=feature_cols,
             sample_df=sample_df,
-            extra_metadata={**meta, "role": "anomaly", "min_rul_fit": str(anomaly_det.min_rul_fit)},
+            extra_metadata={**meta, "winner": winner, "role": "rul"},
         )
         if entry:
-            registered["anomaly"] = entry
+            registered["rul"] = entry
 
-        if cox_model is not None and cox_model.model is not None:
-            surv_path = MODELS_DIR / f"survival_{dataset_id}.pkl"
-            name = registered_model_name("survival", dataset_id)
-            entry = _log_survival_pyfunc(
-                surv_path,
-                name,
-                feature_cols=cox_model.feature_cols,
-                extra_metadata={**meta, "role": "cox_ph"},
-            )
-            if entry:
-                registered["survival"] = entry
+    for role, clf in (("failure_30", failure_clf), ("failure_72", failure_clf_72)):
+        name = registered_model_name(role, dataset_id)
+        entry = _log_sklearn(
+            clf.model,
+            name,
+            feature_cols=feature_cols,
+            sample_df=sample_df,
+            extra_metadata={**meta, "role": role},
+        )
+        if entry:
+            registered[role] = entry
 
-        if registered:
-            print(
-                f"[{dataset_id}] Registered {len(registered)} model(s) in MLflow: "
-                + ", ".join(f"{v['name']}@v{v['version']}" for v in registered.values()),
-                flush=True,
-            )
-    except Exception as exc:
-        print(f"[{dataset_id}] MLflow model registration failed ({exc})", flush=True)
+    name = registered_model_name("anomaly", dataset_id)
+    entry = _log_sklearn(
+        anomaly_det.model,
+        name,
+        feature_cols=feature_cols,
+        sample_df=sample_df,
+        extra_metadata={**meta, "role": "anomaly", "min_rul_fit": str(anomaly_det.min_rul_fit)},
+    )
+    if entry:
+        registered["anomaly"] = entry
+
+    if cox_model is not None and cox_model.model is not None:
+        surv_path = MODELS_DIR / f"survival_{dataset_id}.pkl"
+        name = registered_model_name("survival", dataset_id)
+        entry = _log_survival_pyfunc(
+            surv_path,
+            name,
+            feature_cols=cox_model.feature_cols,
+            extra_metadata={**meta, "role": "cox_ph"},
+        )
+        if entry:
+            registered["survival"] = entry
+
+    if registered:
+        print(
+            f"[{dataset_id}] Registered {len(registered)} model(s) in MLflow: "
+            + ", ".join(f"{v['name']}@v{v['version']}" for v in registered.values()),
+            flush=True,
+        )
+    else:
+        print(f"[{dataset_id}] No models registered (see errors above).", flush=True)
 
     return registered
 
