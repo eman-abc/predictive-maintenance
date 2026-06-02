@@ -20,28 +20,48 @@ def registry_enabled() -> bool:
     )
 
 
+def registry_log_only() -> bool:
+    """Log models under the MLflow run only (no Unity Catalog / workspace registry)."""
+    return os.getenv("MLFLOW_REGISTER_MODELS", "1").lower() in (
+        "log_only",
+        "artifacts_only",
+    )
+
+
 def _use_unity_catalog_registry() -> bool:
     """Databricks workspaces with legacy registry disabled require UC three-level names."""
+    if registry_log_only():
+        return False
+    if os.getenv("MLFLOW_TRACKING_URI", "").strip().lower() == "databricks":
+        return True
     uri = os.getenv("MLFLOW_REGISTRY_URI", "").strip().lower()
     if uri in ("databricks-uc", "uc"):
         return True
     if uri == "databricks":
-        return False
+        # Legacy workspace registry — disabled on most workspaces since 2024.
+        return True
     if os.getenv("MLFLOW_USE_UC_REGISTRY", "").lower() in ("1", "true", "yes"):
         return True
-    if os.getenv("MLFLOW_UC_CATALOG", "").strip():
-        return True
-    return os.getenv("MLFLOW_TRACKING_URI", "").strip().lower() == "databricks"
+    return bool(os.getenv("MLFLOW_UC_CATALOG", "").strip())
 
 
 def setup_model_registry_uri() -> str:
     """Call before log_model/register on Databricks."""
     import mlflow
 
-    if _use_unity_catalog_registry():
+    if registry_log_only():
+        return "log_only"
+    if os.getenv("MLFLOW_TRACKING_URI", "").strip().lower() == "databricks":
+        # Never use legacy ``databricks`` registry URI — it is disabled on UC workspaces.
+        if os.getenv("MLFLOW_REGISTRY_URI", "").strip().lower() == "databricks":
+            print(
+                "NOTE: Ignoring MLFLOW_REGISTRY_URI=databricks (legacy registry disabled). "
+                "Using databricks-uc. Set MLFLOW_REGISTER_MODELS=log_only to skip UC registry.",
+                flush=True,
+            )
         mlflow.set_registry_uri("databricks-uc")
         return "databricks-uc"
-    legacy = os.getenv("MLFLOW_REGISTRY_URI", "databricks")
+    legacy = os.getenv("MLFLOW_REGISTRY_URI", "./mlruns")
     mlflow.set_registry_uri(legacy)
     return legacy
 
@@ -102,15 +122,17 @@ def _log_sklearn(
         metadata.update(extra_metadata)
 
     log_name = artifact_log_name(name)
+    log_kw: dict[str, Any] = dict(
+        sk_model=sk_model,
+        name=log_name,
+        signature=signature,
+        input_example=X.head(3),
+        metadata=metadata,
+    )
+    if not registry_log_only():
+        log_kw["registered_model_name"] = name
     try:
-        info = mlflow.sklearn.log_model(
-            sk_model=sk_model,
-            name=log_name,
-            registered_model_name=name,
-            signature=signature,
-            input_example=X.head(3),
-            metadata=metadata,
-        )
+        info = mlflow.sklearn.log_model(**log_kw)
     except Exception as exc:
         print(f"  Registry sklearn {name}: {exc}", flush=True)
         try:
@@ -165,13 +187,15 @@ def _log_survival_pyfunc(
 
     try:
         log_name = artifact_log_name(name)
-        info = mlflow.pyfunc.log_model(
+        pyfunc_kw: dict[str, Any] = dict(
             python_model=SurvivalPyFunc(),
             artifacts={"bundle": str(path.resolve())},
             name=log_name,
-            registered_model_name=name,
             metadata=metadata,
         )
+        if not registry_log_only():
+            pyfunc_kw["registered_model_name"] = name
+        info = mlflow.pyfunc.log_model(**pyfunc_kw)
     except Exception as exc:
         print(f"  Registry survival skip {name}: {exc}", flush=True)
         return None
@@ -206,6 +230,8 @@ def register_phase3_models(
         return {}
 
     setup_model_registry_uri()
+    if registry_log_only():
+        print(f"[{dataset_id}] MLflow log_only: saving models under run (no UC registry).", flush=True)
 
     registered: dict[str, dict[str, str]] = {}
     meta = {
@@ -220,10 +246,9 @@ def register_phase3_models(
         name = registered_model_name("rul", dataset_id, variant="lstm")
         try:
             log_name = artifact_log_name(name)
-            info = mlflow.pytorch.log_model(
+            pt_kw: dict[str, Any] = dict(
                 pytorch_model=best_rul.net,
                 name=log_name,
-                registered_model_name=name,
                 metadata={
                     **meta,
                     "sequence_length": str(getattr(best_rul, "sequence_length", 30)),
@@ -231,6 +256,9 @@ def register_phase3_models(
                     "feature_cols": json.dumps(feature_cols),
                 },
             )
+            if not registry_log_only():
+                pt_kw["registered_model_name"] = name
+            info = mlflow.pytorch.log_model(**pt_kw)
             registered["rul"] = {
                 "name": name,
                 "version": str(getattr(info, "registered_model_version", "")),

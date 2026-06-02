@@ -29,6 +29,7 @@ from src.ingestion.cmapss_config import CMAPSS_DATASET_IDS  # noqa: E402
 from src.models.mlflow_registry import (  # noqa: E402
     register_models_from_disk,
     registry_enabled,
+    registry_log_only,
     setup_model_registry_uri,
 )
 from src.utils.databricks_uc import resolve_uc_catalog_schema  # noqa: E402
@@ -64,6 +65,13 @@ def main() -> None:
         print("MLFLOW_REGISTER_MODELS=0 — nothing to do.")
         sys.exit(0)
 
+    if registry_log_only():
+        print(
+            "MLFLOW_REGISTER_MODELS=log_only — models logged under each run, "
+            "not registered in Unity Catalog.",
+            flush=True,
+        )
+
     if args.all:
         datasets = list(CMAPSS_DATASET_IDS)
     elif args.datasets:
@@ -80,7 +88,9 @@ def main() -> None:
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"))
     reg_uri = setup_model_registry_uri()
     print(f"MLflow registry URI: {reg_uri}", flush=True)
-    if reg_uri == "databricks-uc" and uri == "databricks":
+    if reg_uri == "log_only":
+        print("Skipping Unity Catalog registry (log_only mode).", flush=True)
+    elif reg_uri == "databricks-uc" and uri == "databricks":
         try:
             cat, sch, meta = resolve_uc_catalog_schema()
             os.environ["MLFLOW_UC_CATALOG"] = cat

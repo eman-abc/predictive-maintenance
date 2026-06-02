@@ -17,6 +17,13 @@ def _headers(token: str) -> dict[str, str]:
 def list_uc_catalogs(host: str, token: str) -> list[str]:
     url = f"{host.rstrip('/')}/api/2.1/unity-catalog/catalogs"
     resp = requests.get(url, headers=_headers(token), timeout=60)
+    if resp.status_code == 403:
+        raise PermissionError(
+            "403 on Unity Catalog API — your PAT cannot list catalogs. "
+            "In Databricks UI: Catalog Explorer → note catalog + schema names, then set "
+            "MLFLOW_UC_CATALOG and MLFLOW_UC_SCHEMA. Or set MLFLOW_REGISTER_MODELS=log_only "
+            "to skip UC registry (experiments still work)."
+        )
     resp.raise_for_status()
     data = resp.json()
     names = [c["name"] for c in data.get("catalogs", []) if c.get("name")]
