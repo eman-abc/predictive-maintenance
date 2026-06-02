@@ -9,6 +9,9 @@ import yaml
 
 DEFAULT_CONFIG_DIR = Path("configs")
 
+# Official NASA C-MAPSS subsets (FD001–FD004).
+CMAPSS_DATASET_IDS: tuple[str, ...] = ("FD001", "FD002", "FD003", "FD004")
+
 
 def load_cmapss_config(
     dataset_id: str = "FD001",

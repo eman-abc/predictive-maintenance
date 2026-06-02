@@ -1,19 +1,16 @@
 """Fleet overview — health scores from Phase 3 test predictions."""
 
-import sys
-from pathlib import Path
-
 import streamlit as st
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dashboard.data_loader import (
     load_fleet_predictions,
     load_phase3_summary,
     render_dataset_selector,
 )
+from dashboard.page_init import init_page
 
 st.set_page_config(page_title="Fleet Overview", layout="wide")
+init_page()
 st.title("Fleet Overview")
 
 dataset_id = render_dataset_selector()

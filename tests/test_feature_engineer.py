@@ -41,8 +41,9 @@ def test_degradation_index(sample_cmapss):
     assert result["degradation_index"].min() >= 0
 
 
-def test_engineer_cmapss_pipeline(sample_cmapss):
+def test_engineer_cmapss_pipeline_deprecated(sample_cmapss):
     engineer = FeatureEngineer(window_sizes=[3])
-    result = engineer.engineer_cmapss(sample_cmapss)
+    with pytest.warns(DeprecationWarning, match="engineer_cmapss"):
+        result = engineer.engineer_cmapss(sample_cmapss)
     assert "degradation_index" in result.columns
     assert len(result) == len(sample_cmapss)

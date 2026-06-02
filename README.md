@@ -5,7 +5,7 @@ An end-to-end predictive maintenance platform for industrial assets, combining R
 ## Features
 
 - **Data ingestion** — NASA CMAPSS turbofan engine data and AI4I 2020 manufacturing dataset
-- **Feature engineering** — rolling statistics, lag features, degradation indices
+- **Feature engineering** — Phase 2 CMAPSS pipeline (rolling, lag, delta, slope, spectral, degradation index); config per FD001–FD004
 - **ML models** — Random Forest / GBM for RUL and failure prediction, LSTM for sequences, optional Cox PH survival analysis
 - **MLOps** — MLflow experiment tracking and model artifact storage
 - **Alerts** — configurable threshold engine with CMMS work order integration (mock)
@@ -52,16 +52,38 @@ Place files in the following directories:
 
 | Dataset | Source | Files |
 |---------|--------|-------|
-| CMAPSS | [NASA Prognostics Data Repository](https://ti.arc.nasa.gov/tech/dash/groups/pcoe/prognostic-data-repository/) | `train_FD001.txt`, `test_FD001.txt`, `RUL_FD001.txt` → `data/raw/cmapss/` |
+| CMAPSS | [NASA Prognostics Data Repository](https://ti.arc.nasa.gov/tech/dash/groups/pcoe/prognostic-data-repository/) | `train_FD00X.txt`, `test_FD00X.txt`, `RUL_FD00X.txt` (X=001–004) → `data/raw/cmapss/` |
 | AI4I 2020 | [UCI ML Repository](https://archive.ics.uci.edu/dataset/601/ai4i+2020+predictive+maintenance+dataset) | `ai4i2020.csv` → `data/raw/ai4i/` |
 
-### 4. Train models
+### 4. Build features and train (CMAPSS)
 
 ```bash
-python -m src.models.train
+python scripts/build_cmapss_dataset.py --all
+python scripts/train_cmapss_phase3.py --all
 ```
 
-Artifacts are saved to `models/` and metrics logged to `mlruns/`.
+Or one command (build + train all FD001–FD004):
+
+```bash
+python scripts/train_all_cmapss.py
+```
+
+Verify for demos / supervisor review:
+
+```bash
+python scripts/report_cmapss_mlflow.py
+mlflow ui --backend-store-uri ./mlruns --host 127.0.0.1 --port 5000
+```
+
+See [docs/cmapss_mlflow_verification.md](docs/cmapss_mlflow_verification.md).
+
+**Colab / cloud GPU:** [notebooks/cmapss_colab_train_all.ipynb](notebooks/cmapss_colab_train_all.ipynb) or `python scripts/cmapss_colab_train.py --fast`
+
+**Faster local train (MLflow unchanged):** `python scripts/train_cmapss_phase3.py --all --skip-lstm --gbm-max-rows 100000`
+
+Artifacts: `models/`, `data/processed/cmapss_*_predictions.parquet`, `artifacts/cmapss_*_phase3_summary.json`, metrics in `mlruns/`.
+
+Legacy quick train (RF on Parquet, no full Phase 3 comparison): `python -m src.models.train legacy`
 
 ### 5. Launch dashboard
 
