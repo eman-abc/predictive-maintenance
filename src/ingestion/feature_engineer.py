@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+_LEGACY_CMAPSS_FE_MSG = (
+    "FeatureEngineer.engineer_cmapss() is deprecated. Use Phase 2 instead: "
+    "build_cmapss_dataset() with CmapssPreprocessor + CmapssFeatureEngineer "
+    "(see scripts/build_cmapss_dataset.py and docs/cmapss_phase2_preprocessing.md)."
+)
 
 LABEL_COLS = {
     "unit_id",
@@ -22,7 +29,11 @@ LABEL_COLS |= {f"failure_{h}" for h in (30, 72)}
 
 
 class FeatureEngineer:
-    """Rolling-window and lag features for predictive maintenance."""
+    """
+    Legacy helpers for rolling/lag features and AI4I.
+
+    CMAPSS: use :class:`CmapssFeatureEngineer` via ``build_cmapss_dataset()`` — not this class.
+    """
 
     SENSOR_COLS = [f"sensor_{i}" for i in range(1, 22)]
     OP_COLS = ["op_setting_1", "op_setting_2", "op_setting_3"]
@@ -75,7 +86,12 @@ class FeatureEngineer:
         return df
 
     def engineer_cmapss(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Full feature pipeline for CMAPSS data."""
+        """
+        Deprecated CMAPSS feature pipeline (all 21 sensors, no Phase 2 preprocessing).
+
+        Use ``src.ingestion.cmapss_pipeline.build_cmapss_dataset`` instead.
+        """
+        warnings.warn(_LEGACY_CMAPSS_FE_MSG, DeprecationWarning, stacklevel=2)
         df = self.add_rolling_features(df)
         df = self.add_lag_features(df)
         df = self.add_degradation_index(df)
@@ -103,7 +119,12 @@ class FeatureEngineer:
 
 @dataclass
 class CmapssFeatureEngineer:
-    """Config-driven CMAPSS feature pipeline (Phase 2)."""
+    """
+    Canonical CMAPSS feature pipeline (Phase 2).
+
+    Config-driven rolling, lag, delta, slope, spectral, and degradation_index features.
+    Invoked from ``build_cmapss_dataset()`` after ``CmapssPreprocessor``.
+    """
 
     sensor_cols: list[str]
     window_sizes: list[int] = field(default_factory=lambda: [5, 10, 30])

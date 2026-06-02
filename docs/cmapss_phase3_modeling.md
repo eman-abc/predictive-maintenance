@@ -27,11 +27,14 @@ Phase 3 trains and compares RUL models, selects a winner by **NASA score**, scor
 ## Run
 
 ```bash
+python scripts/train_cmapss_phase3.py --all          # FD001–FD004 (default)
 python scripts/train_cmapss_phase3.py --dataset FD001
-python scripts/train_cmapss_phase3.py --datasets FD001 FD003
-python scripts/run_e2e.py --skip-build   # train + export both
-python scripts/export_fleet_predictions.py --datasets FD001 FD003
+python scripts/train_all_cmapss.py                   # build + train all
+python scripts/run_e2e.py --skip-build
+python scripts/report_cmapss_mlflow.py               # supervisor verification
 ```
+
+See [cmapss_mlflow_verification.md](cmapss_mlflow_verification.md).
 
 Options: `--lstm-epochs 15`, `--val-fraction 0.2`
 

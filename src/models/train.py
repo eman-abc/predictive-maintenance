@@ -1,6 +1,7 @@
 """Training orchestrator with MLflow experiment logging."""
 
 import os
+import warnings
 from pathlib import Path
 
 import mlflow
@@ -12,6 +13,12 @@ from src.models.failure_classifier import FailureClassifier
 from src.models.rul_regressor import RULRegressor
 
 load_dotenv()
+
+_LEGACY_PREPARE_MSG = (
+    "prepare_and_train() uses a simplified legacy trainer on Phase 2 Parquet. "
+    "For CMAPSS benchmarking use: python scripts/train_cmapss_phase3.py --all "
+    "or python scripts/train_all_cmapss.py"
+)
 
 MODELS_DIR = Path("models")
 PROCESSED_DIR = Path(os.getenv("PROCESSED_DATA_DIR", "./data/processed"))
@@ -82,7 +89,12 @@ def prepare_and_train(
     cmapss_raw_dir: str = "./data/raw/cmapss",
     ai4i_raw_dir: str = "./data/raw/ai4i",
 ) -> dict:
-    """End-to-end: build processed CMAPSS data, engineer AI4I features, train models."""
+    """
+    Legacy entry: Phase 2 CMAPSS build + simple RF/GBM on Parquet, optional AI4I.
+
+    Prefer ``scripts/train_cmapss_phase3.py --all`` for full CMAPSS MLflow runs.
+    """
+    warnings.warn(_LEGACY_PREPARE_MSG, DeprecationWarning, stacklevel=2)
     from src.ingestion.ai4i_loader import load_ai4i
     from src.ingestion.cmapss_pipeline import build_cmapss_dataset
     from src.ingestion.feature_engineer import FeatureEngineer
@@ -115,10 +127,38 @@ def prepare_and_train(
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "phase3":
-        from src.models.cmapss_phase3 import run_phase3
+    from src.ingestion.cmapss_config import CMAPSS_DATASET_IDS
+    from src.models.cmapss_phase3 import run_phase3, run_phase3_all
 
-        dataset = sys.argv[2] if len(sys.argv) > 2 else "FD001"
-        print(run_phase3(dataset))
+    if len(sys.argv) > 1 and sys.argv[1] == "legacy":
+        print(prepare_and_train())
+    elif len(sys.argv) > 1 and sys.argv[1] == "phase3":
+        targets = sys.argv[2:] if len(sys.argv) > 2 else list(CMAPSS_DATASET_IDS)
+        if len(targets) == 1:
+            print(run_phase3(targets[0]))
+        else:
+            print(run_phase3_all(targets))
+    elif len(sys.argv) > 1 and sys.argv[1] == "fast":
+        print(
+            "Fast CMAPSS train (skip LSTM, smaller GBM subsample). "
+            "Pass extra args: --skip-lstm is implicit.\n",
+            flush=True,
+        )
+        print(
+            run_phase3_all(
+                skip_lstm=True,
+                gbm_max_rows=100_000,
+                anomaly_max_rows=50_000,
+                lstm_epochs=5,
+            )
+        )
+        print("\nVerify: python scripts/report_cmapss_mlflow.py", flush=True)
     else:
-        prepare_and_train()
+        print(
+            "Training all CMAPSS subsets (FD001–FD004) with MLflow. "
+            "Use 'python -m src.models.train legacy' for the old path, "
+            "'python -m src.models.train fast' for Colab-style speed.\n",
+            flush=True,
+        )
+        print(run_phase3_all())
+        print("\nVerify: python scripts/report_cmapss_mlflow.py", flush=True)
