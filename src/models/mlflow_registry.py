@@ -46,6 +46,18 @@ def setup_model_registry_uri() -> str:
     return legacy
 
 
+def artifact_log_name(registry_name: str) -> str:
+    """
+    Short name for ``log_model(name=...)``.
+
+    MLflow 3 / Databricks reject ``.`` ``/`` ``:`` in logged model names;
+    UC registry still uses ``catalog.schema.model`` via ``registered_model_name``.
+    """
+    if registry_name.count(".") >= 2:
+        return registry_name.split(".", 2)[-1]
+    return registry_name
+
+
 def registered_model_name(role: str, dataset_id: str, *, variant: str | None = None) -> str:
     """
     Model Registry name.
@@ -89,14 +101,30 @@ def _log_sklearn(
     if extra_metadata:
         metadata.update(extra_metadata)
 
-    info = mlflow.sklearn.log_model(
-        sk_model=sk_model,
-        name=name,
-        registered_model_name=name,
-        signature=signature,
-        input_example=X.head(3),
-        metadata=metadata,
-    )
+    log_name = artifact_log_name(name)
+    try:
+        info = mlflow.sklearn.log_model(
+            sk_model=sk_model,
+            name=log_name,
+            registered_model_name=name,
+            signature=signature,
+            input_example=X.head(3),
+            metadata=metadata,
+        )
+    except Exception as exc:
+        print(f"  Registry sklearn {name}: {exc}", flush=True)
+        try:
+            info = mlflow.sklearn.log_model(
+                sk_model=sk_model,
+                name=log_name,
+                signature=signature,
+                input_example=X.head(3),
+                metadata=metadata,
+            )
+            info = mlflow.register_model(info.model_uri, name)
+        except Exception as exc2:
+            print(f"  Registry fallback failed {name}: {exc2}", flush=True)
+            return None
     version = getattr(info, "registered_model_version", None)
     return {
         "name": name,
@@ -136,10 +164,11 @@ def _log_survival_pyfunc(
             return pd.DataFrame({"rul_pred_cox": preds})
 
     try:
+        log_name = artifact_log_name(name)
         info = mlflow.pyfunc.log_model(
             python_model=SurvivalPyFunc(),
             artifacts={"bundle": str(path.resolve())},
-            name=name,
+            name=log_name,
             registered_model_name=name,
             metadata=metadata,
         )
@@ -190,9 +219,10 @@ def register_phase3_models(
 
         name = registered_model_name("rul", dataset_id, variant="lstm")
         try:
+            log_name = artifact_log_name(name)
             info = mlflow.pytorch.log_model(
                 pytorch_model=best_rul.net,
-                name=name,
+                name=log_name,
                 registered_model_name=name,
                 metadata={
                     **meta,

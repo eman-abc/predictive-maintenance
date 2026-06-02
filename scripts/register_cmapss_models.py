@@ -85,11 +85,19 @@ def main() -> None:
         print(f"UC model names: {cat}.{sch}.cmapss_<role>_FD00X", flush=True)
 
     all_registered: dict[str, dict] = {}
+    failed = 0
     for ds in datasets:
         print(f"\n=== Register {ds} ===", flush=True)
-        all_registered[ds] = register_models_from_disk(ds, training_batch=args.run_label)
+        try:
+            all_registered[ds] = register_models_from_disk(ds, training_batch=args.run_label)
+            if not all_registered[ds]:
+                failed += 1
+        except Exception as exc:
+            print(f"[{ds}] FAILED: {exc}", flush=True)
+            all_registered[ds] = {}
+            failed += 1
 
-    print("\nDone. In Databricks: Machine Learning → Models", flush=True)
+    print("\nDone. In Databricks: Catalog Explorer → your catalog → schema → Models", flush=True)
     for ds, reg in all_registered.items():
         if reg:
             print(f"  {ds}: {', '.join(v['name'] for v in reg.values())}")
@@ -98,4 +106,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"\nRegistration aborted: {exc}", file=sys.stderr)
+        print("Run: python scripts/diagnose_databricks_registry.py", file=sys.stderr)
+        sys.exit(1)
