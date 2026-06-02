@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.alerts.alert_payload import snapshot_sensor_readings
@@ -32,6 +33,7 @@ from src.models.anomaly_detector import (
 )
 from src.models.failure_classifier import FailureClassifier
 from src.models.lstm_model import LSTMModel
+from src.ingestion.cmapss_config import CMAPSS_DATASET_IDS
 from src.models.rul_regressor import RULRegressor
 
 load_dotenv()
@@ -39,6 +41,9 @@ load_dotenv()
 MODELS_DIR = Path("models")
 PROCESSED_DIR = Path(os.getenv("PROCESSED_DATA_DIR", "./data/processed"))
 ARTIFACTS_DIR = Path("artifacts")
+REGISTRY_PATH = ARTIFACTS_DIR / "cmapss_training_registry.json"
+MLFLOW_PIPELINE_TAG = "cmapss_phase3"
+PIPELINE_VERSION = "phase3_v1"
 LSTM_WINDOW = 30
 VAL_FRACTION = 0.2
 # GBM on full FD002/FD004 row counts can take hours; subsample for fit only.
@@ -63,14 +68,76 @@ def _mlflow_setup(dataset_id: str) -> str:
     return name
 
 
+def _registry_entry(summary: dict[str, Any], *, mlflow_run_id: str | None) -> dict[str, Any]:
+    test_m = summary.get("test_metrics") or {}
+    return {
+        "dataset_id": summary["dataset_id"],
+        "winner": summary.get("winner"),
+        "test_rmse": test_m.get("rmse"),
+        "test_nasa_score": test_m.get("rul_score"),
+        "predictions_path": summary.get("predictions_path"),
+        "summary_json": str(ARTIFACTS_DIR / f"cmapss_{summary['dataset_id']}_phase3_summary.json"),
+        "mlflow_experiment": os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"),
+        "mlflow_run_name": f"{summary['dataset_id']}_phase3_summary",
+        "mlflow_run_id": mlflow_run_id,
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def update_training_registry(summary: dict[str, Any], *, mlflow_run_id: str | None = None) -> Path:
+    """Merge one dataset's Phase 3 summary into artifacts/cmapss_training_registry.json."""
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    entry = _registry_entry(summary, mlflow_run_id=mlflow_run_id)
+    if REGISTRY_PATH.exists():
+        registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    else:
+        registry = {
+            "pipeline": MLFLOW_PIPELINE_TAG,
+            "pipeline_version": PIPELINE_VERSION,
+            "experiment": entry["mlflow_experiment"],
+            "datasets": {},
+        }
+    registry["updated_at"] = entry["trained_at"]
+    registry["datasets"][summary["dataset_id"]] = entry
+    REGISTRY_PATH.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+    return REGISTRY_PATH
+
+
+def run_phase3_all(
+    dataset_ids: list[str] | tuple[str, ...] | None = None,
+    *,
+    val_fraction: float = VAL_FRACTION,
+    lstm_epochs: int = 15,
+    skip_lstm: bool = False,
+    gbm_max_rows: int | None = None,
+    anomaly_max_rows: int | None = None,
+) -> dict[str, Any]:
+    """Train and evaluate all requested CMAPSS subsets; update the training registry."""
+    ids = list(dataset_ids or CMAPSS_DATASET_IDS)
+    summaries: dict[str, Any] = {}
+    for dataset_id in ids:
+        print(f"\n========== CMAPSS Phase 3: {dataset_id} ==========", flush=True)
+        summaries[dataset_id] = run_phase3(
+            dataset_id,
+            val_fraction=val_fraction,
+            lstm_epochs=lstm_epochs,
+            skip_lstm=skip_lstm,
+            gbm_max_rows=gbm_max_rows,
+            anomaly_max_rows=anomaly_max_rows,
+        )
+    return summaries
+
+
 def _train_rul(
     model_type: str,
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     feature_cols: list[str],
+    *,
+    gbm_max_rows: int = GBM_MAX_TRAIN_ROWS,
 ) -> tuple[RULRegressor, dict[str, float], dict[str, float]]:
     fit_df = (
-        _subsample_rows(train_df, GBM_MAX_TRAIN_ROWS)
+        _subsample_rows(train_df, gbm_max_rows)
         if model_type == "gbm"
         else train_df
     )
@@ -111,11 +178,13 @@ def _fit_failure_classifier(
     train_df: pd.DataFrame,
     feature_cols: list[str],
     label_col: str,
+    *,
+    gbm_max_rows: int = GBM_MAX_TRAIN_ROWS,
 ) -> None:
     """Fit GBM with balanced sample weights for imbalanced failure horizons."""
     from sklearn.utils.class_weight import compute_sample_weight
 
-    fit_df = _subsample_rows(train_df, GBM_MAX_TRAIN_ROWS)
+    fit_df = _subsample_rows(train_df, gbm_max_rows)
     X = fit_df[feature_cols].fillna(0)
     y = fit_df[label_col]
     weights = compute_sample_weight(class_weight="balanced", y=y)
@@ -145,6 +214,8 @@ def _train_failure_classifier(
     val_df: pd.DataFrame,
     feature_cols: list[str],
     label_col: str = "failure_30",
+    *,
+    gbm_max_rows: int = GBM_MAX_TRAIN_ROWS,
 ) -> tuple[FailureClassifier, dict[str, float | int | str]]:
     """
     Train failure-within-horizon classifier (UC5 Component B).
@@ -152,7 +223,7 @@ def _train_failure_classifier(
     Validation uses non-terminal cycles on held-out engines (mixed 0/1 labels).
     """
     clf = FailureClassifier(model_type="gbm")
-    _fit_failure_classifier(clf, train_df, feature_cols, label_col)
+    _fit_failure_classifier(clf, train_df, feature_cols, label_col, gbm_max_rows=gbm_max_rows)
 
     val_eval = rul_validation_frame(val_df)
     metrics = _eval_failure_classifier(
@@ -183,6 +254,7 @@ def _retrain_rul_winner(
     feature_cols: list[str],
     *,
     lstm_epochs: int,
+    gbm_max_rows: int = GBM_MAX_TRAIN_ROWS,
 ) -> RULRegressor | LSTMModel:
     if winner == "lstm":
         model = LSTMModel(input_size=len(feature_cols), hidden_size=64, num_layers=2)
@@ -196,7 +268,7 @@ def _retrain_rul_winner(
     reg = RULRegressor(model_type=winner)
     reg.feature_cols = feature_cols
     fit_df = (
-        _subsample_rows(train_full, GBM_MAX_TRAIN_ROWS)
+        _subsample_rows(train_full, gbm_max_rows)
         if winner == "gbm"
         else train_full
     )
@@ -208,13 +280,15 @@ def _train_anomaly_detector(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     feature_cols: list[str],
+    *,
+    anomaly_max_rows: int = ANOMALY_MAX_TRAIN_ROWS,
 ) -> tuple[AnomalyDetector, dict[str, float | int | str]]:
     detector = AnomalyDetector()
     fit_info = detector.fit(
         train_df,
         feature_cols,
         min_rul=ANOMALY_MIN_RUL_FIT,
-        max_rows=ANOMALY_MAX_TRAIN_ROWS,
+        max_rows=anomaly_max_rows,
     )
     val_eval = rul_validation_frame(val_df)
     val_scores, _ = detector.predict_scores(val_eval)
@@ -316,10 +390,20 @@ def run_phase3(
     *,
     val_fraction: float = VAL_FRACTION,
     lstm_epochs: int = 15,
+    skip_lstm: bool = False,
+    gbm_max_rows: int | None = None,
+    anomaly_max_rows: int | None = None,
 ) -> dict[str, Any]:
     """
     Full Phase 3 pipeline: engine split, model comparison, test eval, fleet export.
+
+    Fast-training options (still logged to MLflow):
+    - ``skip_lstm``: compare RF vs GBM only (CPU-friendly on Colab).
+    - ``gbm_max_rows`` / ``anomaly_max_rows``: cap rows used for GBM / Isolation Forest fit.
     """
+    gbm_cap = gbm_max_rows if gbm_max_rows is not None else GBM_MAX_TRAIN_ROWS
+    anomaly_cap = anomaly_max_rows if anomaly_max_rows is not None else ANOMALY_MAX_TRAIN_ROWS
+
     _mlflow_setup(dataset_id)
     MODELS_DIR.mkdir(exist_ok=True)
 
@@ -344,30 +428,48 @@ def run_phase3(
     val_results: dict[str, dict[str, float]] = {}
 
     with mlflow.start_run(run_name=f"{dataset_id}_phase3_summary"):
+        mlflow.set_tags(
+            {
+                "pipeline": MLFLOW_PIPELINE_TAG,
+                "pipeline_version": PIPELINE_VERSION,
+                "dataset_id": dataset_id,
+                "task": "cmapss_rul_failure_anomaly",
+            }
+        )
         mlflow.log_param("dataset_id", dataset_id)
         mlflow.log_param("val_fraction", val_fraction)
         mlflow.log_param("lstm_window", LSTM_WINDOW)
+        mlflow.log_param("skip_lstm", skip_lstm)
+        mlflow.log_param("gbm_max_train_rows", gbm_cap)
+        mlflow.log_param("anomaly_max_train_rows", anomaly_cap)
+        mlflow.log_param("n_features", len(feature_cols))
         mlflow.log_param("train_units", len(train_units))
         mlflow.log_param("val_units", len(val_units))
 
         for model_type in ("rf", "gbm"):
             print(f"[{dataset_id}] Training RUL {model_type}...", flush=True)
             with mlflow.start_run(run_name=f"{dataset_id}_rul_{model_type}", nested=True):
-                reg, val_m, _ = _train_rul(model_type, train_df, val_df, feature_cols)
+                reg, val_m, _ = _train_rul(
+                    model_type, train_df, val_df, feature_cols, gbm_max_rows=gbm_cap
+                )
                 mlflow.log_param("model_type", model_type)
                 mlflow.log_metrics({f"val_{k}": v for k, v in val_m.items()})
                 val_results[model_type] = val_m
 
-        print(f"[{dataset_id}] Training RUL lstm ({lstm_epochs} epochs)...", flush=True)
-        with mlflow.start_run(run_name=f"{dataset_id}_rul_lstm", nested=True):
-            lstm, val_m, train_m = _train_lstm(
-                train_df, val_df, feature_cols, epochs=lstm_epochs
-            )
-            mlflow.log_param("model_type", "lstm")
-            mlflow.log_param("sequence_length", LSTM_WINDOW)
-            mlflow.log_metrics({f"val_{k}": v for k, v in val_m.items()})
-            mlflow.log_metric("train_final_loss", train_m.get("final_loss", 0))
-            val_results["lstm"] = val_m
+        if not skip_lstm:
+            print(f"[{dataset_id}] Training RUL lstm ({lstm_epochs} epochs)...", flush=True)
+            with mlflow.start_run(run_name=f"{dataset_id}_rul_lstm", nested=True):
+                lstm, val_m, train_m = _train_lstm(
+                    train_df, val_df, feature_cols, epochs=lstm_epochs
+                )
+                mlflow.log_param("model_type", "lstm")
+                mlflow.log_param("sequence_length", LSTM_WINDOW)
+                mlflow.log_metrics({f"val_{k}": v for k, v in val_m.items()})
+                mlflow.log_metric("train_final_loss", train_m.get("final_loss", 0))
+                val_results["lstm"] = val_m
+        else:
+            mlflow.log_param("lstm_skipped", True)
+            print(f"[{dataset_id}] Skipping LSTM (skip_lstm=True)", flush=True)
 
         winner = rank_models(val_results)
         print(f"[{dataset_id}] Winner: {winner} (val NASA {val_results[winner]['rul_score']:.2f})", flush=True)
@@ -384,7 +486,11 @@ def run_phase3(
                 run_name=f"{dataset_id}_{label_col}_gbm", nested=True
             ):
                 clf, clf_val_m = _train_failure_classifier(
-                    train_df, val_df, feature_cols, label_col=label_col
+                    train_df,
+                    val_df,
+                    feature_cols,
+                    label_col=label_col,
+                    gbm_max_rows=gbm_cap,
                 )
                 failure_clf_val_metrics[label_col] = clf_val_m
                 mlflow.log_param("label_col", label_col)
@@ -397,15 +503,19 @@ def run_phase3(
 
         # Retrain winner + classifiers on all training engines before test scoring
         best_rul = _retrain_rul_winner(
-            winner, train_full, feature_cols, lstm_epochs=lstm_epochs
+            winner,
+            train_full,
+            feature_cols,
+            lstm_epochs=lstm_epochs,
+            gbm_max_rows=gbm_cap,
         )
         failure_clf = FailureClassifier(model_type="gbm")
         _fit_failure_classifier(
-            failure_clf, train_full, feature_cols, "failure_30"
+            failure_clf, train_full, feature_cols, "failure_30", gbm_max_rows=gbm_cap
         )
         failure_clf_72 = FailureClassifier(model_type="gbm")
         _fit_failure_classifier(
-            failure_clf_72, train_full, feature_cols, "failure_72"
+            failure_clf_72, train_full, feature_cols, "failure_72", gbm_max_rows=gbm_cap
         )
 
         if winner == "lstm":
@@ -418,7 +528,7 @@ def run_phase3(
         print(f"[{dataset_id}] Training anomaly detector (Isolation Forest)...", flush=True)
         with mlflow.start_run(run_name=f"{dataset_id}_anomaly_iforest", nested=True):
             anomaly_det, anomaly_val_m = _train_anomaly_detector(
-                train_df, val_df, feature_cols
+                train_df, val_df, feature_cols, anomaly_max_rows=anomaly_cap
             )
             mlflow.log_param("min_rul_fit", ANOMALY_MIN_RUL_FIT)
             for key, value in anomaly_val_m.items():
@@ -430,7 +540,7 @@ def run_phase3(
             train_full,
             feature_cols,
             min_rul=ANOMALY_MIN_RUL_FIT,
-            max_rows=ANOMALY_MAX_TRAIN_ROWS,
+            max_rows=anomaly_cap,
         )
         anomaly_det.save(MODELS_DIR / f"anomaly_{dataset_id}.pkl")
 
@@ -506,6 +616,9 @@ def run_phase3(
         summary = {
             "dataset_id": dataset_id,
             "winner": winner,
+            "skip_lstm": skip_lstm,
+            "gbm_max_train_rows": gbm_cap,
+            "anomaly_max_train_rows": anomaly_cap,
             "val_metrics": val_results,
             "test_metrics": test_metrics,
             "failure_clf_val_metrics": failure_clf_val_metrics,
@@ -519,5 +632,8 @@ def run_phase3(
         summary_path = ARTIFACTS_DIR / f"cmapss_{dataset_id}_phase3_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         mlflow.log_dict(summary, "phase3_summary.json")
+        run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
+        summary["mlflow_run_id"] = run_id
+        update_training_registry(summary, mlflow_run_id=run_id)
 
     return summary
