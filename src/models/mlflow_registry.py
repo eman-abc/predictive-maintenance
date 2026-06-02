@@ -20,13 +20,48 @@ def registry_enabled() -> bool:
     )
 
 
-def registered_model_name(role: str, dataset_id: str, *, variant: str | None = None) -> str:
-    """Unity Catalog / workspace registry name, e.g. cmapss_rul_gbm_FD001."""
+def use_legacy_model_registry() -> bool:
+    """Workspace Model Registry (short names). Set MLFLOW_USE_LEGACY_MODEL_REGISTRY=1."""
+    return os.getenv("MLFLOW_USE_LEGACY_MODEL_REGISTRY", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _short_model_name(role: str, dataset_id: str, *, variant: str | None = None) -> str:
     parts = ["cmapss", role]
     if variant:
         parts.append(variant)
     parts.append(dataset_id)
     return "_".join(parts)
+
+
+def registered_model_name(role: str, dataset_id: str, *, variant: str | None = None) -> str:
+    """
+    Registered model name for MLflow.
+
+    - Unity Catalog (default on new Databricks): ``catalog.schema.cmapss_rul_gbm_FD001``
+    - Legacy workspace registry: ``cmapss_rul_gbm_FD001`` (set MLFLOW_USE_LEGACY_MODEL_REGISTRY=1)
+    """
+    short = _short_model_name(role, dataset_id, variant=variant)
+    if use_legacy_model_registry():
+        return short
+    catalog = os.getenv("MLFLOW_UC_CATALOG", "main").strip()
+    schema = os.getenv("MLFLOW_UC_SCHEMA", "default").strip()
+    return f"{catalog}.{schema}.{short}"
+
+
+def configure_model_registry() -> str:
+    """Set registry URI before log_model(registered_model_name=...). Returns active URI."""
+    import mlflow
+
+    if use_legacy_model_registry():
+        uri = "databricks"
+    else:
+        uri = os.getenv("MLFLOW_REGISTRY_URI", "databricks-uc").strip() or "databricks-uc"
+    mlflow.set_registry_uri(uri)
+    return uri
 
 
 def _log_sklearn(
@@ -137,6 +172,13 @@ def register_phase3_models(
     """
     if not registry_enabled():
         return {}
+
+    registry_uri = configure_model_registry()
+    print(
+        f"[{dataset_id}] Model registry URI={registry_uri!r} "
+        f"(legacy names={use_legacy_model_registry()})",
+        flush=True,
+    )
 
     registered: dict[str, dict[str, str]] = {}
     meta = {

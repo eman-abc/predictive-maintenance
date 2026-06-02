@@ -70,9 +70,13 @@ def main() -> None:
 
     import mlflow
 
+    from src.models.mlflow_registry import configure_model_registry, use_legacy_model_registry
+
     uri = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"))
+    reg_uri = configure_model_registry()
+    print(f"Model registry: {reg_uri} (legacy={use_legacy_model_registry()})", flush=True)
 
     all_registered: dict[str, dict] = {}
     for ds in datasets:

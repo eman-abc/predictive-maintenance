@@ -47,11 +47,20 @@ python scripts/report_cmapss_mlflow.py
 
 ## Model Registry (Databricks → Models)
 
+**Unity Catalog** (default): three-part names, e.g. `main.default.cmapss_rul_gbm_FD001`. Set in Colab/config:
+
+```python
+os.environ["MLFLOW_UC_CATALOG"] = "main"      # your catalog
+os.environ["MLFLOW_UC_SCHEMA"] = "default"    # schema you can write to
+```
+
+**Legacy workspace registry** (short names): `os.environ["MLFLOW_USE_LEGACY_MODEL_REGISTRY"] = "1"` before register.
+
 After Phase 3, registered names (per subset) include:
 
-| Registry name | Role |
+| Registry name (UC) | Role |
 |---------------|------|
-| `cmapss_rul_{rf,gbm,lstm}_FD00X` | RUL winner |
+| `main.default.cmapss_rul_{rf,gbm,lstm}_FD00X` | RUL winner |
 | `cmapss_failure_30_FD00X` | 30-cycle failure |
 | `cmapss_failure_72_FD00X` | 72-cycle failure |
 | `cmapss_anomaly_FD00X` | Isolation Forest |
