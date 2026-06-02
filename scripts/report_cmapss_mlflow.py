@@ -46,7 +46,7 @@ def _mlflow_summary_runs() -> list[dict]:
     except ImportError:
         return []
 
-    uri = os.getenv("MLFLOW_TRACKING_URI", str(ROOT / "mlruns"))
+    uri = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
     experiment = os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance")
     mlflow.set_tracking_uri(uri)
     exp = mlflow.get_experiment_by_name(experiment)
