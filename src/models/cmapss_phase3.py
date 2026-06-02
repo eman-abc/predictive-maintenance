@@ -40,6 +40,7 @@ from src.models.cmapss_survival import (
     evaluate_cox_rul,
     select_cox_features,
 )
+from src.models.mlflow_registry import register_phase3_models
 from src.models.survival_model import SurvivalModel
 
 load_dotenv()
@@ -101,6 +102,7 @@ def _registry_entry(summary: dict[str, Any], *, mlflow_run_id: str | None) -> di
         "predictions_path": summary.get("predictions_path"),
         "summary_json": str(ARTIFACTS_DIR / f"cmapss_{summary['dataset_id']}_phase3_summary.json"),
         "survival_model": str(MODELS_DIR / f"survival_{summary['dataset_id']}.pkl"),
+        "registered_models": summary.get("registered_models") or {},
         "mlflow_experiment": os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"),
         "mlflow_run_name": f"{summary['dataset_id']}_phase3_summary",
         "mlflow_run_id": mlflow_run_id,
@@ -779,6 +781,19 @@ def run_phase3(
                     continue
                 mlflow.log_metric(f"test_{label_col}_{key}", float(value))
 
+        registered_models = register_phase3_models(
+            dataset_id,
+            winner=winner,
+            feature_cols=feature_cols,
+            sample_df=train_full,
+            training_batch=batch_id,
+            best_rul=best_rul,
+            failure_clf=failure_clf,
+            failure_clf_72=failure_clf_72,
+            anomaly_det=anomaly_det,
+            cox_model=cox_model,
+        )
+
         fleet = build_fleet_predictions(
             test_df,
             best_rul,
@@ -804,6 +819,7 @@ def run_phase3(
             "val_metrics": val_results,
             "cox_val_metrics": cox_val_metrics,
             "cox_test_metrics": cox_test_metrics,
+            "registered_models": registered_models,
             "test_metrics": test_metrics,
             "failure_clf_val_metrics": failure_clf_val_metrics,
             "failure_clf_test_metrics": failure_clf_test_metrics,

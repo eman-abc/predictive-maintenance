@@ -45,6 +45,26 @@ export DATABRICKS_TOKEN=...
 python scripts/report_cmapss_mlflow.py
 ```
 
+## Model Registry (Databricks → Models)
+
+After Phase 3, registered names (per subset) include:
+
+| Registry name | Role |
+|---------------|------|
+| `cmapss_rul_{rf,gbm,lstm}_FD00X` | RUL winner |
+| `cmapss_failure_30_FD00X` | 30-cycle failure |
+| `cmapss_failure_72_FD00X` | 72-cycle failure |
+| `cmapss_anomaly_FD00X` | Isolation Forest |
+| `cmapss_survival_FD00X` | Cox PH |
+
+Disable with `MLFLOW_REGISTER_MODELS=0`. Re-register from disk:
+
+```bash
+python scripts/register_cmapss_models.py --all --mlflow-databricks --run-label uc5_register_v1
+```
+
+Colab: notebook section **5b** runs the same script.
+
 ## Re-runs (evidence of all trains)
 
 Databricks MLflow **keeps every run**. Re-running the notebook creates new `FD00X_phase3_summary` parents (new `run_id`); nothing is auto-deleted. Use tag **`training_batch`** (default `colab-YYYYMMDDTHHMMSSZ`) or sort by **Start time** to compare sessions. Set `RUN_LABEL` in the notebook config for a memorable tag (e.g. `uc5_colab_full_v1`).
