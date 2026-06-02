@@ -52,6 +52,16 @@ def main() -> None:
     parser.add_argument("--gbm-max-rows", type=int, default=None)
     parser.add_argument("--anomaly-max-rows", type=int, default=None)
     parser.add_argument("--datasets", nargs="+", default=list(CMAPSS_DATASET_IDS))
+    parser.add_argument(
+        "--upload-dir",
+        default=None,
+        help="Colab folder with uploaded CMAPSS txt files (e.g. /content/cmapss_upload)",
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download from mirror if raw files missing (default: require upload)",
+    )
     args = parser.parse_args()
 
     if os.getenv("CMAPSS_COLAB_SKIP_BUILD", "").lower() in ("1", "true", "yes"):
@@ -74,11 +84,15 @@ def main() -> None:
     )
 
     raw = ROOT / "data" / "raw" / "cmapss"
-    if not (raw / "train_FD001.txt").exists():
-        print("Downloading CMAPSS raw files…", flush=True)
-        from src.ingestion.cmapss_download import download_cmapss_raw
+    upload_dir = args.upload_dir or os.getenv("CMAPSS_UPLOAD_DIR")
+    from src.ingestion.cmapss_download import ensure_cmapss_raw
 
-        download_cmapss_raw(raw)
+    ensure_cmapss_raw(
+        raw,
+        upload_dir=upload_dir,
+        download=args.download or os.getenv("CMAPSS_ALLOW_DOWNLOAD", "").lower()
+        in ("1", "true", "yes"),
+    )
 
     if not args.skip_build:
         for ds in args.datasets:

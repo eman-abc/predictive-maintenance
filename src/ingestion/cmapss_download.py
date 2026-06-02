@@ -1,7 +1,8 @@
-"""Download NASA CMAPSS raw files into data/raw/cmapss/."""
+"""Download or import NASA CMAPSS raw files into data/raw/cmapss/."""
 
 from __future__ import annotations
 
+import shutil
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -20,6 +21,95 @@ FILE_STEMS: tuple[str, ...] = tuple(
     for fd in CMAPSS_DATASET_IDS
     for prefix in ("train", "test", "RUL")
 )
+
+REQUIRED_FILENAMES: tuple[str, ...] = tuple(f"{stem}.txt" for stem in FILE_STEMS)
+
+
+def missing_cmapss_files(raw_dir: str | Path) -> list[str]:
+    """Return required filenames not present (or too small) under raw_dir."""
+    raw_dir = Path(raw_dir)
+    missing = []
+    for name in REQUIRED_FILENAMES:
+        path = raw_dir / name
+        if not path.is_file() or path.stat().st_size < 100:
+            missing.append(name)
+    return missing
+
+
+def _find_uploaded_file(source_dir: Path, stem: str) -> Path | None:
+    """Locate stem.txt in source_dir or source_dir/CMAPSSData."""
+    for candidate in (source_dir / f"{stem}.txt", source_dir / "CMAPSSData" / f"{stem}.txt"):
+        if candidate.is_file() and candidate.stat().st_size >= 100:
+            return candidate
+    return None
+
+
+def import_cmapss_from_dir(
+    source_dir: str | Path,
+    raw_dir: str | Path = "data/raw/cmapss",
+    *,
+    verbose: bool = True,
+) -> Path:
+    """
+    Copy uploaded CMAPSS files from Colab disk (or any folder) into data/raw/cmapss/.
+
+    Accepts flat layout or NASA zip extract folder ``CMAPSSData/``.
+    """
+    source_dir = Path(source_dir)
+    raw_dir = Path(raw_dir)
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"Upload folder not found: {source_dir.resolve()}")
+
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for stem in FILE_STEMS:
+        src = _find_uploaded_file(source_dir, stem)
+        if src is None:
+            continue
+        dest = raw_dir / f"{stem}.txt"
+        if dest.exists() and dest.stat().st_size == src.stat().st_size:
+            if verbose:
+                print(f"ok  {dest.name} (already in place)")
+            continue
+        shutil.copy2(src, dest)
+        copied += 1
+        if verbose:
+            print(f"copy {src.name} -> {dest} ({dest.stat().st_size:,} bytes)")
+
+    still_missing = missing_cmapss_files(raw_dir)
+    if still_missing:
+        raise FileNotFoundError(
+            f"Still missing {len(still_missing)} file(s) in {raw_dir}.\n"
+            f"Upload to {source_dir}:\n  " + "\n  ".join(still_missing[:6])
+            + ("\n  …" if len(still_missing) > 6 else "")
+        )
+    if verbose:
+        print(f"All 12 CMAPSS files ready in {raw_dir.resolve()} ({copied} copied this run)")
+    return raw_dir
+
+
+def ensure_cmapss_raw(
+    raw_dir: str | Path = "data/raw/cmapss",
+    *,
+    upload_dir: str | Path | None = None,
+    download: bool = False,
+    verbose: bool = True,
+) -> Path:
+    """Use upload folder and/or download until all 12 raw files exist."""
+    raw_dir = Path(raw_dir)
+    if not missing_cmapss_files(raw_dir):
+        if verbose:
+            print(f"CMAPSS raw data already in {raw_dir.resolve()}")
+        return raw_dir
+    if upload_dir is not None:
+        return import_cmapss_from_dir(upload_dir, raw_dir, verbose=verbose)
+    if download:
+        download_cmapss_raw(raw_dir, verbose=verbose)
+        return raw_dir
+    raise FileNotFoundError(
+        f"CMAPSS files missing in {raw_dir}. "
+        "Upload train_*.txt, test_*.txt, RUL_*.txt or pass upload_dir=/content/cmapss_upload"
+    )
 
 
 def _download_one(url: str, dest: Path, *, min_bytes: int = 100) -> None:
