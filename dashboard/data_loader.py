@@ -11,6 +11,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 PROCESSED = ROOT / "data" / "processed"
 ARTIFACTS = ROOT / "artifacts"
+MODELS = ROOT / "models"
 DEFAULT_DATASET = "FD001"
 CMAPSS_DATASETS = ("FD001", "FD002", "FD003", "FD004")
 
@@ -82,3 +83,17 @@ def load_unit_trajectory(unit_id: int, dataset_id: str = DEFAULT_DATASET) -> pd.
         return None
     df = pd.read_parquet(path)
     return df[df["unit_id"] == unit_id].sort_values("cycle")
+
+
+def survival_model_path(dataset_id: str = DEFAULT_DATASET) -> Path:
+    return MODELS / f"survival_{dataset_id}.pkl"
+
+
+def load_survival_model(dataset_id: str = DEFAULT_DATASET):
+    """Load fitted Cox PH model if Phase 3 produced one."""
+    path = survival_model_path(dataset_id)
+    if not path.exists():
+        return None
+    from src.models.survival_model import SurvivalModel
+
+    return SurvivalModel.load(path)

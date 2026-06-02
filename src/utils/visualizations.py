@@ -41,6 +41,26 @@ def plot_sensor_timeseries(
     return fig
 
 
+def plot_survival_curve(curve_df: pd.DataFrame, asset_id: str) -> go.Figure:
+    """Conditional survival probability from current cycle (Cox PH)."""
+    fig = px.line(
+        curve_df,
+        x="cycle",
+        y="survival_prob",
+        title=f"Survival curve — {asset_id}",
+        labels={
+            "cycle": "Future operating cycle",
+            "survival_prob": "P(operational | survived to current cycle)",
+        },
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        yaxis=dict(range=[0, 1.05]),
+    )
+    fig.add_hline(y=0.5, line_dash="dash", line_color="orange", annotation_text="50%")
+    return fig
+
+
 def plot_health_gauge(score: float, title: str = "Health Score") -> go.Figure:
     """Create a gauge chart for asset health score (0-100)."""
     color = "green" if score >= 70 else "orange" if score >= 40 else "red"

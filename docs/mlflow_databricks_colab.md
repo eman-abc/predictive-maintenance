@@ -14,7 +14,7 @@ Open `notebooks/cmapss_colab_train_all.ipynb` on Colab:
 
 1. In **config**, set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (or Colab secret `DATABRICKS_TOKEN`).
 2. Run **§4 Connect MLflow → Databricks** (smoke test logs one run).
-3. Run **§5** training — Phase 3 runs appear as `FD00X_phase3_summary`.
+3. Run **§5** training — Phase 3 trains **FD001–FD004**; parent runs `FD00X_phase3_summary` with nested `FD00X_rul_cox` (Cox PH) unless you pass `--skip-cox`.
 4. In Databricks: **Machine Learning → Experiments** → your experiment path.
 
 Train command (same as the notebook):
@@ -44,6 +44,12 @@ export DATABRICKS_HOST=...
 export DATABRICKS_TOKEN=...
 python scripts/report_cmapss_mlflow.py
 ```
+
+## Re-runs (evidence of all trains)
+
+Databricks MLflow **keeps every run**. Re-running the notebook creates new `FD00X_phase3_summary` parents (new `run_id`); nothing is auto-deleted. Use tag **`training_batch`** (default `colab-YYYYMMDDTHHMMSSZ`) or sort by **Start time** to compare sessions. Set `RUN_LABEL` in the notebook config for a memorable tag (e.g. `uc5_colab_full_v1`).
+
+Local files in the Colab VM (`models/`, predictions Parquet) are overwritten each train — download the zip if you need a snapshot.
 
 ## Security
 

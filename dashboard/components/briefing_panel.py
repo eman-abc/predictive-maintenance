@@ -31,6 +31,12 @@ def _briefing_cache_key(dataset_id: str, asset_id: str) -> str:
     return f"briefing_{dataset_id}_{asset_id}"
 
 
+def _optional_float(row: pd.Series, key: str) -> float | None:
+    if key not in row.index or pd.isna(row[key]):
+        return None
+    return float(row[key])
+
+
 def _row_context(row: pd.Series, asset_id: str) -> dict:
     failure_prob = float(row.get("failure_prob_30", row.get("failure_prob", 0)))
     return {
@@ -42,6 +48,8 @@ def _row_context(row: pd.Series, asset_id: str) -> dict:
         "recommended_action": str(row.get("recommended_action", "")),
         "anomaly_score": float(row.get("anomaly_score", 0)),
         "sensor_summary": _sensor_summary_from_row(row),
+        "rul_pred_cox": _optional_float(row, "rul_pred_cox"),
+        "survival_prob_30": _optional_float(row, "survival_prob_30"),
     }
 
 
@@ -93,6 +101,8 @@ def render_asset_briefing(row: pd.Series, *, dataset_id: str) -> None:
             alert_level=ctx["alert_level"],
             recommended_action=ctx["recommended_action"],
             anomaly_score=ctx["anomaly_score"],
+            rul_pred_cox=ctx["rul_pred_cox"],
+            survival_prob_30=ctx["survival_prob_30"],
         )
         st.session_state[_briefing_cache_key(dataset_id, asset_id)] = text
         st.session_state[f"{_briefing_cache_key(dataset_id, asset_id)}_source"] = "instant"
@@ -104,6 +114,8 @@ def render_asset_briefing(row: pd.Series, *, dataset_id: str) -> None:
             ctx["rul"],
             ctx["failure_probability"],
             sensor_summary=ctx["sensor_summary"],
+            rul_pred_cox=ctx["rul_pred_cox"],
+            survival_prob_30=ctx["survival_prob_30"],
         )
         placeholder = st.empty()
         parts: list[str] = []

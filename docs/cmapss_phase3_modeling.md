@@ -10,7 +10,7 @@ Phase 3 trains and compares RUL models, selects a winner by **NASA score**, scor
 
 | Topic | Choice |
 |-------|--------|
-| Winner selection | **Lowest validation NASA score** (`rul_score`); tie-break **RMSE** then simpler model (RF < GBM < LSTM) |
+| Winner selection | **Lowest validation NASA score** (`rul_score`); tie-break **RMSE** then simpler model (RF < GBM < LSTM). **Cox PH is not a winner candidate** — parallel survival baseline only |
 | Test evaluation | **Last cycle per engine** only |
 | LSTM window | **30** cycles |
 | Failure probability | **`failure_30` / `failure_72` GBM** (UC5 24h/72h → 30/72 cycles); alerts use `failure_30` |
@@ -36,7 +36,7 @@ python scripts/report_cmapss_mlflow.py               # supervisor verification
 
 See [cmapss_mlflow_verification.md](cmapss_mlflow_verification.md).
 
-Options: `--lstm-epochs 15`, `--val-fraction 0.2`
+Options: `--lstm-epochs 15`, `--val-fraction 0.2`, `--skip-cox` (skip lifelines Cox PH for faster runs)
 
 ---
 
@@ -45,8 +45,9 @@ Options: `--lstm-epochs 15`, `--val-fraction 0.2`
 | Artifact | Path |
 |----------|------|
 | Best RUL model | `models/rul_{rf,gbm}_FD001.pkl` or `models/rul_lstm_FD001.pt` |
+| Cox PH survival | `models/survival_FD001.pkl` (median RUL + survival probs; not used for winner selection) |
 | Failure classifier | `models/failure_30_FD001.pkl` |
-| Fleet predictions | `data/processed/cmapss_FD001_predictions.parquet` (columns: `failure_prob_30`, `failure_prob_72`, `dataset_id`; `failure_prob` = 30-cycle prob for alerts) |
+| Fleet predictions | `data/processed/cmapss_FD001_predictions.parquet` (columns: `failure_prob_30`, `failure_prob_72`, `rul_pred_cox`, `survival_prob_30`, `survival_prob_72`, `dataset_id`; `failure_prob` = 30-cycle prob for alerts) |
 | Summary JSON | `artifacts/cmapss_FD001_phase3_summary.json` |
 | MLflow runs | `./mlruns` experiment `predictive_maintenance` |
 
@@ -73,10 +74,10 @@ Use the sidebar **CMAPSS dataset** selector (FD001, FD003, …) on all dashboard
 
 | Component | Phase 3 |
 |-----------|---------|
-| B — Model comparison | RF, GBM, LSTM + MLflow |
+| B — Model comparison | RF, GBM, LSTM + Cox PH baseline + MLflow |
 | B — Metrics | NASA score + RMSE on test |
 | C — Alerts | ThresholdEngine + failure_30 probability |
-| D — Dashboard | Fleet, asset, alerts, MLflow page |
+| D — Dashboard | Fleet, asset (Cox survival curve), alerts, MLflow page; briefings include Cox RUL / survival context when fleet parquet has those columns |
 
 ---
 

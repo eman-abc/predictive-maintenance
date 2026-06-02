@@ -19,6 +19,7 @@ from src.models.cmapss_phase3 import ANOMALY_MAX_TRAIN_ROWS, ANOMALY_MIN_RUL_FIT
 from src.models.failure_classifier import FailureClassifier
 from src.models.lstm_model import LSTMModel
 from src.models.rul_regressor import RULRegressor
+from src.models.survival_model import SurvivalModel
 
 MODELS_DIR = Path("models")
 PROCESSED_DIR = Path("data/processed")
@@ -77,6 +78,11 @@ def export(dataset_id: str) -> Path:
         anomaly_det.save(anomaly_path)
         print(f"Trained and saved {anomaly_path}")
 
+    survival_path = MODELS_DIR / f"survival_{dataset_id}.pkl"
+    survival_model = (
+        SurvivalModel.load(survival_path) if survival_path.exists() else None
+    )
+
     fleet = build_fleet_predictions(
         test_df,
         rul_model,
@@ -85,6 +91,7 @@ def export(dataset_id: str) -> Path:
         model_name=winner,
         failure_clf_72=failure_clf_72,
         anomaly_detector=anomaly_det,
+        survival_model=survival_model,
         dataset_id=dataset_id,
     )
     out = PROCESSED_DIR / f"cmapss_{dataset_id}_predictions.parquet"

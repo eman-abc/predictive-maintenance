@@ -37,6 +37,11 @@ def main() -> None:
         help="Skip LSTM (RF vs GBM only); much faster on CPU/Colab",
     )
     parser.add_argument(
+        "--skip-cox",
+        action="store_true",
+        help="Skip Cox PH survival model (lifelines)",
+    )
+    parser.add_argument(
         "--gbm-max-rows",
         type=int,
         default=None,
@@ -54,6 +59,7 @@ def main() -> None:
         val_fraction=args.val_fraction,
         lstm_epochs=args.lstm_epochs,
         skip_lstm=args.skip_lstm,
+        skip_cox=args.skip_cox,
         gbm_max_rows=args.gbm_max_rows,
         anomaly_max_rows=args.anomaly_max_rows,
     )
