@@ -22,6 +22,18 @@ You already have:
 
 That satisfies **MLOps / experiment tracking**. Unity Catalog **Models** is optional.
 
+## Missing `artifacts/cmapss_FD00X_feature_columns.json`
+
+The zip often has `models/` and `data/processed/` but not every `artifacts/*.json`. After `git pull`, registration uses **feature columns stored inside the `.pkl` files** or inferred from `data/processed/cmapss_FD00X_train.parquet`.
+
+Quick check:
+
+```python
+from pathlib import Path
+print("models", len(list(Path("models").glob("*"))))
+print("train parquet", Path("data/processed/cmapss_FD001_train.parquet").exists())
+```
+
 ## Option A — Skip registry (recommended now)
 
 ```python

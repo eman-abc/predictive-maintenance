@@ -23,10 +23,66 @@ LABEL_COLS = {
 }
 
 
-def load_feature_columns(artifacts_dir: Path, dataset_id: str) -> list[str]:
+def infer_feature_columns_from_frame(df: pd.DataFrame) -> list[str]:
+    from src.ingestion.feature_engineer import CmapssFeatureEngineer
+
+    return CmapssFeatureEngineer.feature_column_names(df)
+
+
+def _feature_columns_from_saved_models(dataset_id: str, models_dir: Path) -> list[str] | None:
+    import joblib
+
+    for pattern in (
+        f"rul_gbm_{dataset_id}.pkl",
+        f"rul_rf_{dataset_id}.pkl",
+        f"failure_30_{dataset_id}.pkl",
+        f"anomaly_{dataset_id}.pkl",
+    ):
+        path = models_dir / pattern
+        if not path.exists():
+            continue
+        data = joblib.load(path)
+        cols = data.get("feature_cols") if isinstance(data, dict) else None
+        if cols:
+            return list(cols)
+    return None
+
+
+def load_feature_columns(
+    artifacts_dir: Path,
+    dataset_id: str,
+    *,
+    models_dir: Path | None = None,
+) -> list[str]:
+    """
+    Feature list for scoring — from Phase 2 JSON, saved pickles, or train Parquet.
+
+    Zip exports often omit ``artifacts/*_feature_columns.json``; pickles and
+    ``data/processed/*_train.parquet`` are enough for registration.
+    """
+    import os
+
     path = artifacts_dir / f"cmapss_{dataset_id}_feature_columns.json"
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    if path.exists():
+        with path.open(encoding="utf-8") as f:
+            return json.load(f)
+
+    mdir = models_dir or Path("models")
+    from_pkl = _feature_columns_from_saved_models(dataset_id, mdir)
+    if from_pkl:
+        return from_pkl
+
+    processed = Path(os.getenv("PROCESSED_DATA_DIR", "data/processed"))
+    train_path = processed / f"cmapss_{dataset_id}_train.parquet"
+    if train_path.exists():
+        cols = infer_feature_columns_from_frame(pd.read_parquet(train_path))
+        if cols:
+            return cols
+
+    raise FileNotFoundError(
+        f"Cannot resolve feature columns for {dataset_id}. Need one of: "
+        f"{path}, models/rul_*_{dataset_id}.pkl, or {train_path}"
+    )
 
 
 def last_cycle_per_unit(df: pd.DataFrame) -> pd.DataFrame:

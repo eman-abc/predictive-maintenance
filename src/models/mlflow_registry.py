@@ -358,13 +358,6 @@ def register_models_from_disk(
         else:
             winner = "gbm"
 
-    if feature_cols is None:
-        feature_cols = load_feature_columns(artifacts, dataset_id)
-    if sample_df is None:
-        train_path = Path(os.getenv("PROCESSED_DATA_DIR", "data/processed")) / f"cmapss_{dataset_id}_train.parquet"
-        sample_df = pd.read_parquet(train_path).head(200)
-    training_batch = training_batch or os.getenv("MLFLOW_TRAINING_BATCH_ID", "register_from_disk")
-
     lstm_path = MODELS_DIR / f"rul_lstm_{dataset_id}.pt"
     if winner == "lstm" and lstm_path.exists():
         best_rul = LSTMModel.load(lstm_path)
@@ -383,6 +376,23 @@ def register_models_from_disk(
     anomaly_det = AnomalyDetector.load(MODELS_DIR / f"anomaly_{dataset_id}.pkl")
     surv_path = MODELS_DIR / f"survival_{dataset_id}.pkl"
     cox_model = SurvivalModel.load(surv_path) if surv_path.exists() else None
+
+    if feature_cols is None:
+        if getattr(best_rul, "feature_cols", None):
+            feature_cols = list(best_rul.feature_cols)
+        elif failure_clf.feature_cols:
+            feature_cols = list(failure_clf.feature_cols)
+        else:
+            feature_cols = load_feature_columns(artifacts, dataset_id, models_dir=MODELS_DIR)
+
+    if sample_df is None:
+        train_path = Path(os.getenv("PROCESSED_DATA_DIR", "data/processed")) / f"cmapss_{dataset_id}_train.parquet"
+        if not train_path.exists():
+            raise FileNotFoundError(
+                f"Need {train_path} or feature_columns.json for sample rows when logging models."
+            )
+        sample_df = pd.read_parquet(train_path).head(200)
+    training_batch = training_batch or os.getenv("MLFLOW_TRAINING_BATCH_ID", "register_from_disk")
 
     active = mlflow.active_run()
     if active is None:
