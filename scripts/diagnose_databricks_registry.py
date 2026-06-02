@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
+from src.utils.databricks_uc import resolve_uc_catalog_schema  # noqa: E402
+
 
 def main() -> None:
     host = os.getenv("DATABRICKS_HOST", "")
@@ -23,43 +25,52 @@ def main() -> None:
         sys.exit(1)
 
     import mlflow
-    from mlflow.tracking import MlflowClient
-
-    catalog = os.getenv("MLFLOW_UC_CATALOG", "main")
-    schema = os.getenv("MLFLOW_UC_SCHEMA", "default")
 
     mlflow.set_tracking_uri("databricks")
     mlflow.set_registry_uri("databricks-uc")
     print("Tracking:", mlflow.get_tracking_uri())
     print("Registry:", mlflow.get_registry_uri())
-    print(f"UC target: {catalog}.{schema}.<model>")
     print()
 
-    client = MlflowClient(registry_uri="databricks-uc")
-
     try:
-        catalogs = [c.name for c in client.search_catalogs()]
-        print("Catalogs you can see:", catalogs[:10])
-        if catalog not in catalogs:
-            print(f"WARN: MLFLOW_UC_CATALOG={catalog!r} not in list — pick one from above.")
+        catalog, schema, meta = resolve_uc_catalog_schema(host, token)
     except Exception as exc:
-        print("Could not list catalogs:", exc)
+        print("FAIL: Could not resolve Unity Catalog location:", exc)
+        print("\nIn Databricks UI: Catalog Explorer (left sidebar)")
+        print("  Copy the catalog and schema names you see (NOT 'main' unless it exists).")
+        print("  Then set:")
+        print('    os.environ["MLFLOW_UC_CATALOG"] = "your_catalog"')
+        print('    os.environ["MLFLOW_UC_SCHEMA"] = "your_schema"')
+        sys.exit(1)
 
-    try:
-        schemas = [s.name for s in client.search_schemas(catalog)]
-        print(f"Schemas in {catalog}:", schemas[:15])
-        if schema not in schemas:
-            print(f"WARN: MLFLOW_UC_SCHEMA={schema!r} not in list — pick one from above.")
-    except Exception as exc:
-        print(f"Could not list schemas in {catalog}:", exc)
+    if meta.get("catalog_requested") and meta["catalog_requested"] != catalog:
+        print(
+            f"NOTE: MLFLOW_UC_CATALOG={meta['catalog_requested']!r} does not exist. "
+            f"Using {catalog!r} instead."
+        )
+    if meta.get("schema_requested") and meta["schema_requested"] != schema:
+        print(
+            f"NOTE: MLFLOW_UC_SCHEMA={meta['schema_requested']!r} not in catalog. "
+            f"Using {schema!r} instead."
+        )
+
+    print("Catalogs visible:", meta["catalogs_available"])
+    print(f"Schemas in {catalog}:", meta["schemas_available"])
+    print()
+    print("USE THESE (copy to Colab / .env):")
+    print(f'  MLFLOW_UC_CATALOG="{catalog}"')
+    print(f'  MLFLOW_UC_SCHEMA="{schema}"')
+    print()
+
+    os.environ["MLFLOW_UC_CATALOG"] = catalog
+    os.environ["MLFLOW_UC_SCHEMA"] = schema
 
     exp = os.getenv("MLFLOW_EXPERIMENT_NAME", "/Shared/predictive_maintenance")
     mlflow.set_experiment(exp)
     uc_name = f"{catalog}.{schema}.cmapss_diagnostic_smoke"
     artifact_name = "cmapss_diagnostic_smoke"
 
-    print(f"\nTest register: {uc_name}")
-    print(f"  log_model name (short): {artifact_name}")
+    print(f"Test register: {uc_name}")
 
     try:
         from sklearn.linear_model import Ridge
@@ -76,14 +87,14 @@ def main() -> None:
         print("OK: log_model + register succeeded.")
         print("  model_uri:", info.model_uri)
         print("  version:", getattr(info, "registered_model_version", "?"))
-        print(f"\nIn UI: Catalog → {catalog} → {schema} → Models → {artifact_name}")
+        print(f"\nIn UI: Catalog Explorer → {catalog} → {schema} → Models")
         sys.exit(0)
     except Exception as exc:
         print("FAIL:", exc)
         print("\nTypical fixes:")
-        print("  1. Set MLFLOW_UC_CATALOG / MLFLOW_UC_SCHEMA from Catalog Explorer")
-        print("  2. PAT needs CREATE MODEL on that schema (or use a schema you own)")
-        print("  3. git pull main (artifact name vs UC name fix)")
+        print("  1. Create schema in Catalog Explorer if list was empty")
+        print("  2. PAT needs USE CATALOG + USE SCHEMA + CREATE MODEL on that schema")
+        print("  3. git pull origin main")
         sys.exit(1)
 
 

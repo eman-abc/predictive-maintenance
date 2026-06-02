@@ -31,6 +31,7 @@ from src.models.mlflow_registry import (  # noqa: E402
     registry_enabled,
     setup_model_registry_uri,
 )
+from src.utils.databricks_uc import resolve_uc_catalog_schema  # noqa: E402
 
 
 def main() -> None:
@@ -79,10 +80,21 @@ def main() -> None:
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"))
     reg_uri = setup_model_registry_uri()
     print(f"MLflow registry URI: {reg_uri}", flush=True)
-    if reg_uri == "databricks-uc":
-        cat = os.getenv("MLFLOW_UC_CATALOG", "main")
-        sch = os.getenv("MLFLOW_UC_SCHEMA", "default")
-        print(f"UC model names: {cat}.{sch}.cmapss_<role>_FD00X", flush=True)
+    if reg_uri == "databricks-uc" and uri == "databricks":
+        try:
+            cat, sch, meta = resolve_uc_catalog_schema()
+            os.environ["MLFLOW_UC_CATALOG"] = cat
+            os.environ["MLFLOW_UC_SCHEMA"] = sch
+            if meta.get("catalog_requested") and meta["catalog_requested"] != cat:
+                print(
+                    f"NOTE: catalog {meta['catalog_requested']!r} missing → using {cat!r}",
+                    flush=True,
+                )
+            print(f"UC model names: {cat}.{sch}.cmapss_<role>_FD00X", flush=True)
+        except Exception as exc:
+            print(f"FAIL: Unity Catalog discovery: {exc}", file=sys.stderr)
+            print("Run: python scripts/diagnose_databricks_registry.py", file=sys.stderr)
+            sys.exit(1)
 
     all_registered: dict[str, dict] = {}
     failed = 0
