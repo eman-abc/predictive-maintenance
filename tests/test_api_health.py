@@ -9,7 +9,8 @@ from src.api.main import app
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setenv("OLLAMA_PRELOAD_ON_STARTUP", "false")
     return TestClient(app)
 
 

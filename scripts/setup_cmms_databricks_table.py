@@ -25,7 +25,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from src.alerts.cmms_databricks import (
-        create_schema_sql,
+        auto_table_fqn,
         create_table_sql,
         ensure_table,
         explore_table_url,
@@ -33,30 +33,35 @@ def main() -> None:
         table_fqn,
     )
 
-    fqn = table_fqn()
-    sql = create_table_sql(fqn)
+    manual_fqn = table_fqn()
+    auto_fqn = auto_table_fqn()
 
     if args.print_sql_only:
-        print(sql)
+        print(create_table_sql(manual_fqn))
+        print()
+        print(create_table_sql(auto_fqn))
         return
 
-    schema = schema_fqn_from_table(fqn)
+    schema = schema_fqn_from_table(manual_fqn)
     print(f"Creating schema (if missing): {schema}")
-    print(f"Creating table (if missing): {fqn}")
     try:
-        ensure_table(fqn=fqn)
+        for label, fqn in [("manual", manual_fqn), ("auto-dispatch", auto_fqn)]:
+            print(f"Creating table ({label}): {fqn}")
+            ensure_table(fqn=fqn)
     except Exception as exc:
         print(f"\nFAIL: {exc}")
         print("\nIf catalog/schema is wrong, run:")
         print("  python scripts/diagnose_databricks_registry.py")
-        print("Then set CMMS_DELTA_TABLE=<catalog>.<schema>.cmms_work_orders in .env")
+        print("Then set CMMS_DELTA_TABLE and CMMS_AUTO_DELTA_TABLE in .env")
         raise SystemExit(1) from exc
     print("Done.")
-    url = explore_table_url(fqn)
-    if url:
-        print(f"Open in UI: {url}")
+    for fqn in (manual_fqn, auto_fqn):
+        url = explore_table_url(fqn)
+        if url:
+            print(f"Open {fqn}: {url}")
     print("\nEnable logging in .env:")
     print("  CMMS_LOG_TO_DATABRICKS=true")
+    print("  CMMS_AUTO_DISPATCH=true")
 
 
 if __name__ == "__main__":

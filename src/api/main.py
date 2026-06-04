@@ -11,22 +11,27 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.alerts.cmms_databricks import (
-    databricks_table_links,
+    auto_table_fqn,
+    databricks_status_payload,
     fetch_recent_work_orders,
     is_databricks_logging_configured,
-    table_fqn,
 )
 from src.alerts.cmms_mock import CMMSClient
 from src.api.schemas import (
+    AlertAckRequest,
+    AutoDispatchRequest,
     BriefingRequest,
     BriefingResponse,
     HealthResponse,
     MetricExplainRequest,
     MetricExplainResponse,
+    ShiftBriefingRequest,
+    ShiftBriefingResponse,
     WorkOrdersRequest,
     WorkOrdersResponse,
 )
-from src.services import alerts_service, briefing_service, fleet_service
+from src.services import alert_ack_store, alerts_service, briefing_service, fleet_service
+from src.services.cmms_auto_dispatch import auto_dispatch_critical
 from src.services.mlflow_links_service import mlflow_panel_data
 
 load_dotenv()
@@ -108,7 +113,14 @@ def get_alerts(
 ) -> dict[str, Any]:
     levels = [x.strip() for x in level.split(",")] if level else ["critical", "warning"]
     rows = alerts_service.list_alert_rows(dataset, levels=levels)
+    rows = alert_ack_store.enrich_rows_with_ack(rows, dataset_id=dataset)
     return {"dataset_id": dataset, "count": len(rows), "rows": rows}
+
+
+@app.post("/alerts/ack")
+def acknowledge_alert(body: AlertAckRequest) -> dict[str, str]:
+    alert_ack_store.acknowledge(body.dataset_id, body.asset_id, body.alert_level)
+    return {"status": "acknowledged", "asset_id": body.asset_id}
 
 
 @app.get("/metrics/phase3")
@@ -147,6 +159,16 @@ def create_briefing(body: BriefingRequest) -> BriefingResponse:
     return BriefingResponse(**result)
 
 
+@app.post("/briefings/shift", response_model=ShiftBriefingResponse)
+def create_shift_briefing(body: ShiftBriefingRequest) -> ShiftBriefingResponse:
+    result = briefing_service.generate_shift_briefing(
+        mode=body.mode,
+        dataset_id=body.dataset_id,
+        levels=body.levels,
+    )
+    return ShiftBriefingResponse(**result)
+
+
 @app.post("/metrics/explain", response_model=MetricExplainResponse)
 def explain_metrics(body: MetricExplainRequest) -> MetricExplainResponse:
     result = briefing_service.generate_metric_explanation(
@@ -169,14 +191,14 @@ def submit_work_orders(body: WorkOrdersRequest) -> WorkOrdersResponse:
     return WorkOrdersResponse(results=results, count=len(results))
 
 
+@app.post("/cmms/auto-dispatch")
+def cmms_auto_dispatch(body: AutoDispatchRequest) -> dict[str, Any]:
+    return auto_dispatch_critical(body.dataset_id, levels=body.levels)
+
+
 @app.get("/cmms/databricks/status")
 def cmms_databricks_status() -> dict[str, Any]:
-    configured = is_databricks_logging_configured()
-    out: dict[str, Any] = {"configured": configured}
-    if configured:
-        out["table_fqn"] = table_fqn()
-        out.update(databricks_table_links())
-    return out
+    return databricks_status_payload()
 
 
 @app.get("/cmms/workorders/recent")
@@ -186,5 +208,16 @@ def recent_work_orders(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
     try:
         rows = fetch_recent_work_orders(limit=limit)
         return {"rows": rows, "configured": True}
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.get("/cmms/workorders/recent/auto")
+def recent_auto_work_orders(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    if not is_databricks_logging_configured():
+        return {"rows": [], "configured": False}
+    try:
+        rows = fetch_recent_work_orders(limit=limit, fqn=auto_table_fqn())
+        return {"rows": rows, "configured": True, "table": auto_table_fqn()}
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc

@@ -109,6 +109,44 @@ def get_alerts_df(dataset_id: str, levels: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
+def post_alert_ack(dataset_id: str, asset_id: str, alert_level: str) -> dict[str, Any]:
+    return _post(
+        "/alerts/ack",
+        {
+            "dataset_id": dataset_id,
+            "asset_id": asset_id,
+            "alert_level": alert_level,
+        },
+    )
+
+
+def post_auto_dispatch(dataset_id: str, levels: list[str] | None = None) -> dict[str, Any]:
+    return _post(
+        "/cmms/auto-dispatch",
+        {
+            "dataset_id": dataset_id,
+            "levels": levels or ["critical"],
+        },
+    )
+
+
+def post_shift_briefing(
+    *,
+    mode: str,
+    dataset_id: str,
+    levels: list[str],
+) -> dict[str, Any]:
+    return _post(
+        "/briefings/shift",
+        {"mode": mode, "dataset_id": dataset_id, "levels": levels},
+    )
+
+
+def get_recent_auto_work_orders(limit: int = 20) -> list[dict[str, Any]]:
+    data = _get("/cmms/workorders/recent/auto", limit=limit)
+    return data.get("rows") or []
+
+
 def post_briefing(*, mode: str, dataset_id: str, context: dict[str, Any]) -> dict[str, Any]:
     return _post(
         "/briefings",

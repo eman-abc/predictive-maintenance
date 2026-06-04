@@ -111,9 +111,37 @@ Provide reformat as:
 3. Assets that can continue normal operation
 """
 
+
+def build_instant_shift_briefing(alerts: list[dict[str, Any]]) -> str:
+    """Shift handover summary without LLM — fleet-wide, not one asset."""
+    if not alerts:
+        return (
+            "Shift handover: No active warning or critical alerts. "
+            "Fleet can continue normal monitoring."
+        )
+    critical = [a for a in alerts if str(a.get("level", a.get("alert_level", ""))).lower() == "critical"]
+    warning = [a for a in alerts if str(a.get("level", a.get("alert_level", ""))).lower() == "warning"]
+    lines = [
+        f"Shift handover — {len(alerts)} active alert(s): "
+        f"{len(critical)} critical, {len(warning)} warning."
+    ]
+    if critical:
+        lines.append("Priority critical assets:")
+        for a in critical[:8]:
+            lines.append(
+                f"  - {a.get('asset_id')}: RUL/risk per dashboard; "
+                f"{a.get('recommended_action', a.get('description', 'Inspect per CMMS'))}"
+            )
+    if warning:
+        lines.append(f"Warning assets: {', '.join(a.get('asset_id', '?') for a in warning[:6])}.")
+    lines.append("Recommend: dispatch P1 work orders for critical; schedule P2 within SLA for warnings.")
+    return "\n".join(lines)
+
+
 __all__ = [
     "SYSTEM_PROMPT",
     "build_briefing_prompt",
     "build_instant_briefing",
     "build_alert_summary_prompt",
+    "build_instant_shift_briefing",
 ]

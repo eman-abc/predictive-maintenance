@@ -58,6 +58,22 @@ def _fix_fqn_if_catalog_missing(fqn: str) -> str:
         return fqn
 
 
+def auto_table_fqn() -> str:
+    """Delta table for auto-dispatched critical work orders (separate from manual submit)."""
+    explicit = (os.getenv("CMMS_AUTO_DELTA_TABLE") or "").strip()
+    if explicit:
+        if not _FQN_RE.match(explicit):
+            raise ValueError(
+                f"CMMS_AUTO_DELTA_TABLE must be catalog.schema.table, got {explicit!r}"
+            )
+        return _fix_fqn_if_catalog_missing(explicit)
+    manual = table_fqn()
+    parts = manual.split(".")
+    if len(parts) == 3:
+        return f"{parts[0]}.{parts[1]}.cmms_work_orders_auto"
+    return "workspace.cmapss.cmms_work_orders_auto"
+
+
 def table_fqn() -> str:
     """Fully qualified table name: catalog.schema.table."""
     explicit = (os.getenv("CMMS_DELTA_TABLE") or "").strip()
@@ -122,6 +138,27 @@ def is_databricks_logging_configured() -> bool:
         return True
     except ValueError:
         return False
+
+
+def databricks_status_payload() -> dict[str, Any]:
+    """Manual + auto table FQNs and explorer links for API/dashboard."""
+    if not is_databricks_logging_configured():
+        return {"configured": False}
+    manual = table_fqn()
+    auto = auto_table_fqn()
+    return {
+        "configured": True,
+        "table_fqn": manual,
+        "auto_table_fqn": auto,
+        **databricks_table_links(manual),
+        "auto_explore_url": databricks_table_links(auto).get("explore_url"),
+        "auto_sample_query": (
+            f"SELECT work_order_id, asset_id, dataset_id, submit_status, submitted_at\n"
+            f"FROM {auto}\n"
+            f"ORDER BY submitted_at DESC\n"
+            f"LIMIT 50;"
+        ),
+    }
 
 
 def explore_table_url(fqn: str | None = None) -> str | None:
@@ -275,7 +312,9 @@ def _alert_to_row(
 ) -> tuple[Any, ...]:
     meta = alert.metadata or {}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    work_order_id = f"WO-{alert.alert_id.replace('ALT-', '')}"
+    prefix = (payload.get("work_order_prefix") or "WO").strip()
+    suffix = alert.alert_id.replace("ALT-", "")
+    work_order_id = payload.get("work_order_id") or f"{prefix}-{suffix}"
     sensors = meta.get("sensor_readings") or {}
     routing = map_escalation(
         payload.get("escalation_tier") or meta.get("escalation_tier"),
@@ -312,7 +351,7 @@ def _alert_to_row(
         json.dumps(payload),
         json.dumps(cmms_response) if cmms_response else None,
         now,
-        os.getenv("CMMS_SOURCE", "streamlit_dashboard"),
+        payload.get("source") or os.getenv("CMMS_SOURCE", "streamlit_dashboard"),
     )
 
 
@@ -323,12 +362,13 @@ def insert_work_order(
     payload: dict[str, Any],
     dataset_id: str | None = None,
     cmms_response: dict[str, Any] | None = None,
+    table: str | None = None,
 ) -> dict[str, Any]:
     """Insert one work-order row into the Delta table."""
     if not _enabled():
         return {"status": "skipped", "reason": "CMMS_LOG_TO_DATABRICKS is false"}
 
-    fqn = table_fqn()
+    fqn = table or table_fqn()
     ensure_table(fqn=fqn)
 
     row = _alert_to_row(
@@ -371,9 +411,35 @@ INSERT INTO {fqn} (
     }
 
 
-def fetch_recent_work_orders(*, limit: int = 25) -> list[dict[str, Any]]:
+def fetch_asset_ids_in_table(
+    *,
+    dataset_id: str,
+    fqn: str | None = None,
+    submit_status: str | None = None,
+) -> set[str]:
+    """Asset IDs already logged (for auto-dispatch deduplication)."""
+    fqn = fqn or table_fqn()
+    clauses = ["dataset_id = ?"]
+    params: list[Any] = [dataset_id]
+    if submit_status:
+        clauses.append("submit_status = ?")
+        params.append(submit_status)
+    query = f"""
+SELECT DISTINCT asset_id FROM {fqn}
+WHERE {" AND ".join(clauses)}
+"""
+    try:
+        with _connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                return {str(row[0]) for row in cursor.fetchall()}
+    except Exception:
+        return set()
+
+
+def fetch_recent_work_orders(*, limit: int = 25, fqn: str | None = None) -> list[dict[str, Any]]:
     """Return recent rows for dashboard preview."""
-    fqn = table_fqn()
+    fqn = fqn or table_fqn()
     query = f"""
 SELECT work_order_id, asset_id, dataset_id, submit_status, alert_level,
        escalation_tier, cmms_priority, sla_label, risk_score,
@@ -387,3 +453,7 @@ LIMIT {int(limit)}
             cursor.execute(query)
             columns = [d[0] for d in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def fetch_recent_auto_work_orders(*, limit: int = 25) -> list[dict[str, Any]]:
+    return fetch_recent_work_orders(limit=limit, fqn=auto_table_fqn())

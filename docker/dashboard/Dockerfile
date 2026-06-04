@@ -5,6 +5,8 @@ WORKDIR /app
 COPY requirements-dashboard.txt .
 RUN pip install --no-cache-dir -r requirements-dashboard.txt
 
+# Theme, charts, and some pages still import src (thin client uses API for data/Ollama).
+COPY src ./src
 COPY dashboard ./dashboard
 COPY .streamlit ./.streamlit
 

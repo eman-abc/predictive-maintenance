@@ -9,8 +9,10 @@ import httpx
 
 from src.briefings.briefing_prompts import (
     SYSTEM_PROMPT as BRIEFING_SYSTEM,
+    build_alert_summary_prompt,
     build_briefing_prompt,
     build_instant_briefing,
+    build_instant_shift_briefing,
 )
 from src.briefings.metric_explanation_prompts import (
     SECTION_SUMMARIZE,
@@ -79,6 +81,66 @@ def _prompt_from_context(context: dict[str, Any]) -> str:
         rul_pred_cox=context.get("rul_pred_cox"),
         survival_prob_30=context.get("survival_prob_30"),
     )
+
+
+def _alerts_for_shift(dataset_id: str, levels: list[str] | None = None) -> list[dict[str, Any]]:
+    from src.services.alerts_service import list_alert_rows
+
+    levels = levels or ["critical", "warning"]
+    rows = list_alert_rows(dataset_id, levels=levels)
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "asset_id": row.get("asset_id"),
+                "level": row.get("alert_level"),
+                "alert_level": row.get("alert_level"),
+                "description": row.get("recommended_action") or row.get("alert_message", ""),
+                "recommended_action": row.get("recommended_action"),
+            }
+        )
+    return out
+
+
+def generate_shift_briefing(
+    *,
+    mode: str,
+    dataset_id: str,
+    levels: list[str] | None = None,
+) -> dict[str, Any]:
+    alerts = _alerts_for_shift(dataset_id, levels=levels)
+    if mode == "instant":
+        text = build_instant_shift_briefing(alerts)
+        return {"text": text, "source": "instant", "mode": mode, "alert_count": len(alerts)}
+
+    client = _ollama_client()
+    if not client.is_available():
+        text = build_instant_shift_briefing(alerts)
+        return {
+            "text": text,
+            "source": "instant_fallback",
+            "mode": mode,
+            "alert_count": len(alerts),
+        }
+
+    prompt = build_alert_summary_prompt(alerts)
+    try:
+        text = client.generate(prompt, system=BRIEFING_SYSTEM)
+        return {
+            "text": text.strip(),
+            "source": "ai",
+            "mode": mode,
+            "alert_count": len(alerts),
+        }
+    except Exception as exc:
+        text = build_instant_shift_briefing(alerts)
+        return {
+            "text": text,
+            "source": "instant_error",
+            "mode": mode,
+            "alert_count": len(alerts),
+            "error": str(exc),
+        }
 
 
 def generate_briefing(
