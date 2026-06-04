@@ -7,6 +7,7 @@ import os
 import httpx
 import streamlit as st
 
+from dashboard.api_client import post_metric_explain, use_api_backend
 from dashboard.ollama_startup import get_ollama_client
 from src.briefings.metric_explanation_prompts import (
     SECTION_ANOMALY,
@@ -42,6 +43,20 @@ def _run_generation(
     registry_entry: dict | None,
 ) -> tuple[str, str] | None:
     """Generate explanation text. Returns (text, source) or None on failure."""
+    if use_api_backend():
+        try:
+            with st.spinner("Explaining metrics via API…"):
+                result = post_metric_explain(
+                    section_id=section_id,
+                    dataset_id=dataset_id,
+                    summary=summary,
+                    registry_entry=registry_entry,
+                )
+            return result["text"], result.get("source", "ai")
+        except Exception as exc:
+            st.error(f"Could not generate explanation: {exc}")
+            return None
+
     client = get_ollama_client()
     if not client.is_available():
         text = build_instant_explanation(section_id, summary, dataset_id)

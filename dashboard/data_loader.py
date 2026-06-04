@@ -1,4 +1,4 @@
-"""Load Phase 3 predictions and test trajectories for the dashboard."""
+"""Load Phase 3 predictions — via API (deployment) or local parquet."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+from dashboard.api_client import use_api_backend
 
 ROOT = Path(__file__).resolve().parents[1]
 PROCESSED = ROOT / "data" / "processed"
@@ -29,21 +31,19 @@ def phase3_summary_path(dataset_id: str = DEFAULT_DATASET) -> Path:
 
 
 def list_datasets_with_predictions() -> list[str]:
-    """FD subsets that have a Phase 3 predictions parquet on disk."""
+    if use_api_backend():
+        from dashboard import api_client
+
+        return api_client.list_datasets()
     return [ds for ds in CMAPSS_DATASETS if predictions_path(ds).exists()]
 
 
 def render_dataset_selector() -> str:
-    """
-    Sidebar dataset picker shared across dashboard pages.
-
-    Returns the selected dataset id (e.g. FD001, FD003).
-    """
     available = list_datasets_with_predictions()
     if not available:
         st.sidebar.warning(
             "No prediction files found. Run:\n"
-            "`python scripts/train_cmapss_phase3.py --dataset FD001`"
+            "`python scripts/import_cmapss_colab_outputs.py --force`"
         )
         return DEFAULT_DATASET
     default_idx = 0
@@ -58,6 +58,10 @@ def render_dataset_selector() -> str:
 
 
 def load_fleet_predictions(dataset_id: str = DEFAULT_DATASET) -> pd.DataFrame | None:
+    if use_api_backend():
+        from dashboard import api_client
+
+        return api_client.get_fleet_df(dataset_id)
     path = predictions_path(dataset_id)
     if not path.exists():
         return None
@@ -70,6 +74,10 @@ def load_fleet_predictions(dataset_id: str = DEFAULT_DATASET) -> pd.DataFrame | 
 
 
 def load_phase3_summary(dataset_id: str = DEFAULT_DATASET) -> dict | None:
+    if use_api_backend():
+        from dashboard import api_client
+
+        return api_client.get_phase3_summary(dataset_id)
     path = phase3_summary_path(dataset_id)
     if not path.exists():
         return None
@@ -78,6 +86,10 @@ def load_phase3_summary(dataset_id: str = DEFAULT_DATASET) -> dict | None:
 
 
 def load_training_registry() -> dict | None:
+    if use_api_backend():
+        from dashboard import api_client
+
+        return api_client.get_training_registry()
     path = ARTIFACTS / "cmapss_training_registry.json"
     if not path.exists():
         return None
@@ -86,7 +98,10 @@ def load_training_registry() -> dict | None:
 
 
 def list_available_models(dataset_id: str = DEFAULT_DATASET) -> list[str]:
-    """Basenames of model files on disk for this FD subset."""
+    if use_api_backend():
+        from dashboard import api_client
+
+        return api_client.list_available_models(dataset_id)
     if not MODELS.is_dir():
         return []
     suffix = f"_{dataset_id}"
@@ -98,6 +113,14 @@ def list_available_models(dataset_id: str = DEFAULT_DATASET) -> list[str]:
 
 
 def load_unit_trajectory(unit_id: int, dataset_id: str = DEFAULT_DATASET) -> pd.DataFrame | None:
+    if use_api_backend():
+        from dashboard import api_client
+
+        asset_id = f"ENG-{unit_id:03d}"
+        bundle = api_client.get_asset_bundle(dataset_id, asset_id)
+        if not bundle or not bundle.get("trajectory"):
+            return None
+        return pd.DataFrame(bundle["trajectory"])
     path = test_data_path(dataset_id)
     if not path.exists():
         return None
@@ -110,7 +133,8 @@ def survival_model_path(dataset_id: str = DEFAULT_DATASET) -> Path:
 
 
 def load_survival_model(dataset_id: str = DEFAULT_DATASET):
-    """Load fitted Cox PH model if Phase 3 produced one."""
+    if use_api_backend():
+        return None
     path = survival_model_path(dataset_id)
     if not path.exists():
         return None

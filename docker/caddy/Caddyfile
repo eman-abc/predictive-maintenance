@@ -1,0 +1,10 @@
+# Single public entrypoint for interview tunnel (port 8080).
+:8080 {
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy api:8000
+	}
+	handle {
+		reverse_proxy dashboard:8501
+	}
+}

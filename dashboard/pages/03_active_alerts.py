@@ -12,7 +12,12 @@ import streamlit as st
 from dashboard.data_loader import load_fleet_predictions, render_dataset_selector
 from dashboard.page_init import init_page
 from dashboard.theme import alert_level_color, style_fleet_dataframe
-from src.alerts.alert_payload import fleet_row_to_alert
+from dashboard.api_client import (
+    get_cmms_databricks_status,
+    get_recent_work_orders,
+    post_work_orders,
+    use_api_backend,
+)
 from src.alerts.cmms_databricks import (
     databricks_table_links,
     fetch_recent_work_orders,
@@ -106,9 +111,22 @@ The button below uses `CMMSClient` with a mock REST endpoint. When `CMMS_LOG_TO_
         """
     )
 
-if is_databricks_logging_configured():
-    links = databricks_table_links()
-    fqn = links.get("table_fqn", table_fqn())
+def _databricks_configured() -> bool:
+    if use_api_backend():
+        try:
+            return bool(get_cmms_databricks_status().get("configured"))
+        except Exception:
+            return False
+    return is_databricks_logging_configured()
+
+
+if _databricks_configured():
+    links = (
+        get_cmms_databricks_status()
+        if use_api_backend()
+        else databricks_table_links()
+    )
+    fqn = links.get("table_fqn") or (table_fqn() if not use_api_backend() else "—")
     explore = links.get("explore_url")
     st.caption(
         f"Databricks audit log: `{fqn}`"
@@ -125,15 +143,21 @@ else:
 col_a, col_b = st.columns(2)
 with col_a:
     if st.button("Submit work orders to CMMS (mock)") and len(filtered) > 0:
-        cmms = CMMSClient()
-        results = []
         with st.spinner("Submitting work orders…"):
-            for i, (_, row) in enumerate(filtered.iterrows(), start=1):
-                alert = fleet_row_to_alert(row, alert_id=f"ALT-{i:06d}")
-                if alert:
-                    results.append(
-                        cmms.create_work_order(alert, dataset_id=dataset_id)
-                    )
+            if use_api_backend():
+                batch = post_work_orders(dataset_id, list(level_filter))
+                results = batch.get("results") or []
+            else:
+                cmms = CMMSClient()
+                results = []
+                for i, (_, row) in enumerate(filtered.iterrows(), start=1):
+                    from src.alerts.alert_payload import fleet_row_to_alert
+
+                    alert = fleet_row_to_alert(row, alert_id=f"ALT-{i:06d}")
+                    if alert:
+                        results.append(
+                            cmms.create_work_order(alert, dataset_id=dataset_id)
+                        )
         logged_db = sum(
             1 for r in results if (r.get("databricks") or {}).get("status") == "databricks_logged"
         )
@@ -170,10 +194,14 @@ with col_a:
 with col_b:
     st.caption("Configure `CMMS_API_URL` for a real CMMS, or rely on Databricks audit logging.")
 
-if is_databricks_logging_configured():
+if _databricks_configured():
     with st.expander("Recent work orders in Databricks", expanded=False):
         try:
-            rows = fetch_recent_work_orders(limit=20)
+            rows = (
+                get_recent_work_orders(20)
+                if use_api_backend()
+                else fetch_recent_work_orders(limit=20)
+            )
             if rows:
                 st.dataframe(rows, use_container_width=True, hide_index=True)
             else:

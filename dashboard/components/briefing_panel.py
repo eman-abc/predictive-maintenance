@@ -8,6 +8,7 @@ import httpx
 import pandas as pd
 import streamlit as st
 
+from dashboard.api_client import post_briefing, use_api_backend
 from dashboard.briefing_api import (
     SYSTEM_PROMPT,
     build_briefing_prompt,
@@ -58,16 +59,20 @@ def render_asset_briefing(row: pd.Series, *, dataset_id: str) -> None:
     st.subheader("AI Maintenance Briefing")
     asset_id = str(row["asset_id"])
     ctx = _row_context(row, asset_id)
-    client = get_ollama_client()
+    api_mode = use_api_backend()
+    client = None if api_mode else get_ollama_client()
     preload_status = st.session_state.get("ollama_preload_status", "")
+    ollama_up = api_mode or (client is not None and client.is_available())
 
-    if not client.is_available():
+    if api_mode:
+        st.caption("Briefings via **FastAPI** → Ollama (deployment architecture).")
+    elif not client.is_available():
         st.warning(
             "Ollama is not reachable. Use **Instant briefing** below, or start Ollama:\n\n"
             "```bash\nollama pull llama3.2\n```\n\n"
             "Set `OLLAMA_MODEL=llama3.2` in `.env` (faster than llama3 8B)."
         )
-    else:
+    elif client is not None:
         ready_note = (
             "Model preloaded at startup."
             if preload_status == "ready"
@@ -89,25 +94,41 @@ def render_asset_briefing(row: pd.Series, *, dataset_id: str) -> None:
             "AI briefing",
             type="primary",
             key=f"brief_btn_{dataset_id}_{asset_id}",
-            disabled=not client.is_available(),
+            disabled=not ollama_up,
         )
 
     if instant:
-        text = build_instant_briefing(
-            asset_id=ctx["asset_id"],
-            health_score=ctx["health_score"],
-            rul=ctx["rul"],
-            failure_probability=ctx["failure_probability"],
-            alert_level=ctx["alert_level"],
-            recommended_action=ctx["recommended_action"],
-            anomaly_score=ctx["anomaly_score"],
-            rul_pred_cox=ctx["rul_pred_cox"],
-            survival_prob_30=ctx["survival_prob_30"],
-        )
-        st.session_state[_briefing_cache_key(dataset_id, asset_id)] = text
-        st.session_state[f"{_briefing_cache_key(dataset_id, asset_id)}_source"] = "instant"
+        if api_mode:
+            result = post_briefing(mode="instant", dataset_id=dataset_id, context=ctx)
+            text = result["text"]
+            st.session_state[_briefing_cache_key(dataset_id, asset_id)] = text
+            st.session_state[f"{_briefing_cache_key(dataset_id, asset_id)}_source"] = result.get(
+                "source", "instant"
+            )
+        else:
+            text = build_instant_briefing(
+                asset_id=ctx["asset_id"],
+                health_score=ctx["health_score"],
+                rul=ctx["rul"],
+                failure_probability=ctx["failure_probability"],
+                alert_level=ctx["alert_level"],
+                recommended_action=ctx["recommended_action"],
+                anomaly_score=ctx["anomaly_score"],
+                rul_pred_cox=ctx["rul_pred_cox"],
+                survival_prob_30=ctx["survival_prob_30"],
+            )
+            st.session_state[_briefing_cache_key(dataset_id, asset_id)] = text
+            st.session_state[f"{_briefing_cache_key(dataset_id, asset_id)}_source"] = "instant"
 
-    if generate and client.is_available():
+    if generate and ollama_up and api_mode:
+        with st.spinner("Generating via API…"):
+            result = post_briefing(mode="ai", dataset_id=dataset_id, context=ctx)
+        st.session_state[_briefing_cache_key(dataset_id, asset_id)] = result["text"]
+        st.session_state[f"{_briefing_cache_key(dataset_id, asset_id)}_source"] = result.get(
+            "source", "ai"
+        )
+
+    if generate and client is not None and client.is_available():
         prompt = build_briefing_prompt(
             ctx["asset_id"],
             ctx["health_score"],

@@ -25,6 +25,18 @@ predictive-maintenance/
 └── architecture/   # System diagrams
 ```
 
+## Live demo (`deployment` branch)
+
+Public interview URL: **Docker Compose** (Streamlit → FastAPI → Ollama) + **Cloudflare tunnel**. See [deploy/README.md](deploy/README.md).
+
+```powershell
+git checkout deployment
+.\deploy\run_demo.ps1
+.\deploy\start_tunnel.ps1
+```
+
+Share the `https://….trycloudflare.com` link (app at `/`, API docs at `/api/docs`).
+
 ## Quick Start
 
 ### 1. Clone and install

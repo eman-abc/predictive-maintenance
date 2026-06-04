@@ -98,8 +98,12 @@ if trajectory is not None:
         sensor_df = trajectory[["cycle"] + sensor_cols]
         render_sensor_chart(sensor_df, asset_id)
 
+from dashboard.api_client import use_api_backend
+
 survival_model = load_survival_model(dataset_id)
-if survival_model is not None and trajectory is not None and len(trajectory) > 0:
+if use_api_backend() and trajectory is not None:
+    st.caption("Cox survival chart: available in local mode (API serves fleet + telemetry only).")
+elif survival_model is not None and trajectory is not None and len(trajectory) > 0:
     st.subheader("Cox survival analysis")
     last_cycle_row = trajectory.iloc[-1]
     curve_df = survival_model.survival_curve(

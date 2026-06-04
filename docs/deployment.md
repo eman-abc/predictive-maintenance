@@ -427,11 +427,11 @@ Merge `main` → `deployment` when Phases 1–4 pass local acceptance.
 
 ### Implementation
 
-- [ ] Phase 0: `import_cmapss_colab_outputs.py --force`
-- [ ] Phase 1: FastAPI routes + tests
-- [ ] Phase 2: Streamlit uses `API_BASE_URL` only
-- [ ] Phase 3: `docker compose up --build` green
-- [ ] Phase 4: Public tunnel URL tested from phone
+- [ ] Phase 0: `import_cmapss_colab_outputs.py --force` (you run once on laptop)
+- [x] Phase 1: FastAPI (`src/api/main.py`, `src/services/`) + `tests/test_api_health.py`
+- [x] Phase 2: Thin Streamlit when `API_BASE_URL` is set (`dashboard/api_client.py`)
+- [x] Phase 3: `docker-compose.yml` + `deploy/run_demo.ps1`
+- [ ] Phase 4: Public tunnel URL tested from phone (`deploy/start_tunnel.ps1`)
 
 ### Architecture (presentation)
 
