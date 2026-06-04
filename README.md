@@ -91,6 +91,8 @@ Legacy quick train (RF on Parquet, no full Phase 3 comparison): `python -m src.m
 streamlit run dashboard/app.py
 ```
 
+**Live demo / interview URL:** see [docs/deployment.md](docs/deployment.md) (Docker Compose + thin client + tunnel).
+
 ### 6. Run tests
 
 ```bash

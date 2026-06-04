@@ -13,6 +13,7 @@ from dashboard.data_loader import (
     render_dataset_selector,
 )
 from dashboard.page_init import init_page
+from dashboard.theme import fleet_health_bar_chart, style_fleet_dataframe
 
 st.set_page_config(page_title="Fleet Overview", layout="wide")
 init_page()
@@ -73,9 +74,9 @@ display_cols = [
 ]
 display_cols = [c for c in display_cols if c in df.columns]
 st.dataframe(
-    df[display_cols].style.background_gradient(subset=["health_score"], cmap="RdYlGn"),
+    style_fleet_dataframe(df[display_cols]),
     use_container_width=True,
     hide_index=True,
 )
 
-st.bar_chart(df.set_index("asset_id")["health_score"])
+st.plotly_chart(fleet_health_bar_chart(df), use_container_width=True)

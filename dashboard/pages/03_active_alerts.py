@@ -11,7 +11,15 @@ import streamlit as st
 
 from dashboard.data_loader import load_fleet_predictions, render_dataset_selector
 from dashboard.page_init import init_page
+from dashboard.theme import alert_level_color, style_fleet_dataframe
 from src.alerts.alert_payload import fleet_row_to_alert
+from src.alerts.cmms_databricks import (
+    databricks_table_links,
+    fetch_recent_work_orders,
+    is_databricks_logging_configured,
+    table_fqn,
+)
+from src.alerts.cmms_routing import map_escalation
 from src.alerts.cmms_mock import CMMSClient
 
 st.set_page_config(page_title="Active Alerts", layout="wide")
@@ -56,14 +64,23 @@ display_cols = [
     "recommended_action",
 ]
 display_cols = [c for c in display_cols if c in filtered.columns]
+styled = filtered[display_cols].copy()
+if "alert_level" in styled.columns:
+    styled = styled.rename(columns={"alert_level": "status"})
 st.dataframe(
-    filtered[display_cols],
+    style_fleet_dataframe(styled),
     use_container_width=True,
     hide_index=True,
 )
 
 for _, row in filtered.iterrows():
-    with st.expander(f"{row['asset_id']} — {str(row['alert_level']).upper()}"):
+    level = str(row["alert_level"]).lower()
+    with st.expander(f"{row['asset_id']} — {level.upper()}"):
+        st.markdown(
+            f"Level: <span style='color:{alert_level_color(level)};font-weight:700'>"
+            f"{level.upper()}</span>",
+            unsafe_allow_html=True,
+        )
         st.markdown(f"**Risk score:** {row.get('risk_score', row.get('health_score', 0)):.1f} / 100")
         ttf = row.get("time_to_failure_cycles", row.get("rul_pred", 0))
         st.markdown(f"**Time to predicted failure:** {ttf:.0f} cycles")
@@ -85,8 +102,24 @@ In production, the alert pipeline would:
 4. **Acknowledge** in CMMS → update alert status; unacknowledged critical alerts **escalate** to supervisor after SLA breach.
 5. **Close the loop** when maintenance is completed (work order status feeds back to the dashboard).
 
-The button below uses `CMMSClient` with a mock endpoint; if the API is unreachable, payloads are logged locally.
+The button below uses `CMMSClient` with a mock REST endpoint. When `CMMS_LOG_TO_DATABRICKS=true`, rows are also written to a **Delta table** in Databricks for interview evidence.
         """
+    )
+
+if is_databricks_logging_configured():
+    links = databricks_table_links()
+    fqn = links.get("table_fqn", table_fqn())
+    explore = links.get("explore_url")
+    st.caption(
+        f"Databricks audit log: `{fqn}`"
+        + (f" · [Catalog Explorer]({explore})" if explore else "")
+        + (f" · [SQL warehouse]({links.get('sql_editor_url')})" if links.get("sql_editor_url") else "")
+    )
+else:
+    st.caption(
+        "To log work orders to Databricks: set `CMMS_LOG_TO_DATABRICKS=true`, "
+        "`CMMS_DELTA_TABLE`, `DATABRICKS_SQL_WAREHOUSE_ID`, then run "
+        "`python scripts/setup_cmms_databricks_table.py`."
     )
 
 col_a, col_b = st.columns(2)
@@ -94,14 +127,56 @@ with col_a:
     if st.button("Submit work orders to CMMS (mock)") and len(filtered) > 0:
         cmms = CMMSClient()
         results = []
-        for i, (_, row) in enumerate(filtered.iterrows(), start=1):
-            alert = fleet_row_to_alert(row, alert_id=f"ALT-{i:06d}")
-            if alert:
-                results.append(cmms.create_work_order(alert))
-        st.success(f"Processed {len(results)} work order(s).")
-        with st.expander("Last CMMS payload"):
+        with st.spinner("Submitting work orders…"):
+            for i, (_, row) in enumerate(filtered.iterrows(), start=1):
+                alert = fleet_row_to_alert(row, alert_id=f"ALT-{i:06d}")
+                if alert:
+                    results.append(
+                        cmms.create_work_order(alert, dataset_id=dataset_id)
+                    )
+        logged_db = sum(
+            1 for r in results if (r.get("databricks") or {}).get("status") == "databricks_logged"
+        )
+        st.success(
+            f"Processed {len(results)} work order(s)."
+            + (f" {logged_db} row(s) written to Databricks." if logged_db else "")
+        )
+
+        last = results[-1] if results else {}
+        payload = last.get("payload") or {}
+        routing = map_escalation(payload.get("escalation_tier"))
+        st.markdown(
+            f"**CMMS routing:** `{routing.escalation_tier}` → priority **{routing.cmms_priority}** "
+            f"({routing.sla_label})"
+        )
+
+        db_info = last.get("databricks") or {}
+        if db_info.get("status") == "databricks_logged":
+            explore = db_info.get("explore_url")
+            sql_url = db_info.get("sql_editor_url")
+            st.markdown("**View work orders in Databricks:**")
+            if explore:
+                st.link_button("Open table in Catalog Explorer", explore, type="primary")
+            if sql_url:
+                st.link_button("Open SQL warehouse", sql_url)
+            if db_info.get("sample_query"):
+                st.caption("Or run in SQL editor:")
+                st.code(db_info["sample_query"], language="sql")
+
+        with st.expander("Last submission detail"):
             if results:
                 st.json(results[-1])
 
 with col_b:
-    st.caption("Configure `CMMS_API_URL` and `CMMS_API_KEY` in `.env` for a real endpoint.")
+    st.caption("Configure `CMMS_API_URL` for a real CMMS, or rely on Databricks audit logging.")
+
+if is_databricks_logging_configured():
+    with st.expander("Recent work orders in Databricks", expanded=False):
+        try:
+            rows = fetch_recent_work_orders(limit=20)
+            if rows:
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+            else:
+                st.info("Table is empty — submit work orders above.")
+        except Exception as exc:
+            st.warning(f"Could not query Databricks: {exc}")
