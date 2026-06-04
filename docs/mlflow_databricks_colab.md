@@ -56,6 +56,36 @@ streamlit run dashboard/app.py
 
 This copies **models/**, **artifacts/** (Phase 3 summaries + registry), and **data/processed/** (predictions + trajectories) so the Streamlit UI shows all four FD subsets, Cox survival, anomaly scores, and full model metrics.
 
+### Databricks run links in Streamlit
+
+With `.env` set (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, and optionally `MLFLOW_TRACKING_URI=databricks`), open **Model Metrics** in the dashboard. You get:
+
+- **Open experiment** — `/Shared/predictive_maintenance`
+- **Phase 3 summary runs** — `FD00X_phase3_summary` with **View run ↗** and **models/ ↗** (artifact folder)
+- **Pickle bundle run** — `cmapss_pkl_bundle_v2` with links to uploaded `.pkl` artifacts
+
+Metrics are pulled live from Databricks when credentials are set; run IDs in `artifacts/cmapss_training_registry.json` are used as fallback links.
+
+### Run links without API (optional fallback)
+
+If you do not want the dashboard to call Databricks (no PAT), set **host + experiment id** only. Run IDs are already in `artifacts/cmapss_training_registry.json`.
+
+```env
+DATABRICKS_HOST=https://dbc-xxxx.cloud.databricks.com
+MLFLOW_EXPERIMENT_ID=2311620089394370
+```
+
+The registry also stores `mlflow_experiment_id` after Colab training (or it is in your imported `cmapss_training_registry.json`).
+
+Optional link to the pickle upload run (`cmapss_pkl_bundle_v2`):
+
+```env
+MLFLOW_PKL_BUNDLE_RUN_ID=d33506a96f6e41e1a4144ca50b701b2f
+MLFLOW_PKL_BUNDLE_RUN_NAME=cmapss_pkl_bundle_v2
+```
+
+Metrics in the table then come from the local registry; **View run ↗** still opens the full Databricks run page.
+
 ## Model Registry (Databricks → Models)
 
 After Phase 3, registered names (per subset) include:

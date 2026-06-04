@@ -104,6 +104,9 @@ def _registry_entry(summary: dict[str, Any], *, mlflow_run_id: str | None) -> di
         "survival_model": str(MODELS_DIR / f"survival_{summary['dataset_id']}.pkl"),
         "registered_models": summary.get("registered_models") or {},
         "mlflow_experiment": os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"),
+        "mlflow_experiment_id": summary.get("mlflow_experiment_id")
+        or os.getenv("MLFLOW_EXPERIMENT_ID")
+        or None,
         "mlflow_run_name": f"{summary['dataset_id']}_phase3_summary",
         "mlflow_run_id": mlflow_run_id,
         "training_batch": summary.get("training_batch"),
@@ -125,6 +128,9 @@ def update_training_registry(summary: dict[str, Any], *, mlflow_run_id: str | No
             "datasets": {},
         }
     registry["updated_at"] = entry["trained_at"]
+    exp_id = entry.get("mlflow_experiment_id") or os.getenv("MLFLOW_EXPERIMENT_ID")
+    if exp_id:
+        registry["mlflow_experiment_id"] = str(exp_id)
     prev = registry["datasets"].get(summary["dataset_id"], {})
     history = list(prev.get("mlflow_run_history") or [])
     if prev.get("mlflow_run_id"):
@@ -833,6 +839,8 @@ def run_phase3(
         summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         mlflow.log_dict(summary, "phase3_summary.json")
         run_id = mlflow.active_run().info.run_id if mlflow.active_run() else None
+        if mlflow.active_run():
+            summary["mlflow_experiment_id"] = mlflow.active_run().info.experiment_id
         summary["mlflow_run_id"] = run_id
         update_training_registry(summary, mlflow_run_id=run_id)
 
