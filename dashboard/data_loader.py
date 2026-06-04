@@ -77,6 +77,26 @@ def load_phase3_summary(dataset_id: str = DEFAULT_DATASET) -> dict | None:
         return json.load(f)
 
 
+def load_training_registry() -> dict | None:
+    path = ARTIFACTS / "cmapss_training_registry.json"
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
+def list_available_models(dataset_id: str = DEFAULT_DATASET) -> list[str]:
+    """Basenames of model files on disk for this FD subset."""
+    if not MODELS.is_dir():
+        return []
+    suffix = f"_{dataset_id}"
+    return [
+        path.stem
+        for path in sorted(MODELS.iterdir())
+        if path.suffix in {".pkl", ".pt"} and path.stem.endswith(suffix)
+    ]
+
+
 def load_unit_trajectory(unit_id: int, dataset_id: str = DEFAULT_DATASET) -> pd.DataFrame | None:
     path = test_data_path(dataset_id)
     if not path.exists():

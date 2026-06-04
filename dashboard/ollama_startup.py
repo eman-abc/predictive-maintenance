@@ -10,7 +10,6 @@ from dashboard.briefing_api import create_ollama_client, preload_ollama_model
 
 _STATUS_KEY = "ollama_preload_status"
 _DONE_KEY = "ollama_preload_done"
-_CLIENT_KEY = "ollama_client"
 
 
 def _preload_enabled() -> bool:
@@ -50,7 +49,6 @@ def ensure_ollama_preloaded(*, show_spinner: bool = True) -> str:
                 preload_ollama_model(client)
         else:
             preload_ollama_model(client)
-        st.session_state[_CLIENT_KEY] = client
         status = "ready"
     except Exception as exc:
         status = f"failed: {exc}"
@@ -62,11 +60,8 @@ def ensure_ollama_preloaded(*, show_spinner: bool = True) -> str:
 
 
 def get_ollama_client():
-    """Return the preloaded client, or create one if preload was skipped."""
+    """Return OllamaClient with a fresh module reload (avoids stale Streamlit session classes)."""
     ensure_ollama_preloaded(show_spinner=False)
-    cached = st.session_state.get(_CLIENT_KEY)
-    if cached is not None:
-        return cached
     return create_ollama_client()
 
 

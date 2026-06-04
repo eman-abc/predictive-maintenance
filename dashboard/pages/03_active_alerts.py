@@ -1,5 +1,10 @@
 """Active alerts from Phase 3 fleet predictions (UC5 Component C)."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import json
 import pandas as pd
 import streamlit as st

@@ -1,5 +1,10 @@
 """Per-asset deep-dive using test trajectory + Phase 3 predictions."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import pandas as pd
 import streamlit as st
 
@@ -20,6 +25,15 @@ def _optional_metric(row, key: str) -> float | None:
     if key not in row.index or pd.isna(row[key]):
         return None
     return float(row[key])
+
+
+def _display_rul(value) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    v = float(value)
+    if v == float("inf") or v == float("-inf"):
+        return "—"
+    return f"{v:.0f}"
 
 
 st.set_page_config(page_title="Asset Detail", layout="wide")
@@ -46,8 +60,8 @@ col1, col2 = st.columns([1, 2])
 with col1:
     render_health_gauge(float(row["health_score"]), title=f"{asset_id} Health")
     st.metric("Predicted RUL (winner)", f"{row['rul_pred']:.0f} cycles")
-    if "rul_pred_cox" in row.index and pd.notna(row["rul_pred_cox"]):
-        st.metric("Cox survival RUL", f"{row['rul_pred_cox']:.0f} cycles")
+    if "rul_pred_cox" in row.index:
+        st.metric("Cox survival RUL", f"{_display_rul(row['rul_pred_cox'])} cycles")
     st.metric("True RUL (last cycle)", f"{row['rul_true']:.0f} cycles")
     st.metric("P(failure ≤30 cycles)", f"{row.get('failure_prob_30', row['failure_prob']):.0%}")
     if "failure_prob_72" in row.index:

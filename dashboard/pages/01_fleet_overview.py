@@ -1,5 +1,10 @@
 """Fleet overview — health scores from Phase 3 test predictions."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import streamlit as st
 
 from dashboard.data_loader import (
@@ -25,10 +30,13 @@ if fleet is None:
     st.stop()
 
 if summary:
+    cox_c = summary.get("cox_val_metrics") or {}
+    conc = cox_c.get("concordance")
+    cox_line = f" | Cox C-index: **{conc:.3f}**" if conc and conc == conc else ""
     st.caption(
         f"**{dataset_id}** — RUL: **{summary['winner'].upper()}** | "
         f"NASA: **{summary['test_metrics']['rul_score']:.2f}** | "
-        f"RMSE: **{summary['test_metrics']['rmse']:.2f}** cycles"
+        f"RMSE: **{summary['test_metrics']['rmse']:.2f}** cycles{cox_line}"
     )
 
 df = fleet.rename(
@@ -55,8 +63,11 @@ display_cols = [
     "anomaly_score",
     "is_anomaly",
     "rul",
+    "rul_pred_cox",
+    "survival_prob_30",
     "failure_prob_30",
     "failure_prob_72",
+    "rul_model",
     "status",
     "rul_true",
 ]

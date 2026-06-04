@@ -32,25 +32,30 @@ class OllamaClient:
         """Separate connect vs read limits; read covers model cold-start on slow hardware."""
         return httpx.Timeout(connect=10.0, read=self.timeout, write=30.0, pool=10.0)
 
-    def _generation_options(self) -> dict[str, Any]:
+    def _generation_options(self, *, num_predict: int | None = None) -> dict[str, Any]:
         return {
-            "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "120")),
+            "num_predict": num_predict
+            if num_predict is not None
+            else int(os.getenv("OLLAMA_NUM_PREDICT", "120")),
             "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.3")),
             "top_p": float(os.getenv("OLLAMA_TOP_P", "0.85")),
             "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "2048")),
         }
 
-    def _base_payload(self, *, stream: bool) -> dict[str, Any]:
+    def _base_payload(self, *, stream: bool, num_predict: int | None = None) -> dict[str, Any]:
         return {
             "model": self.model,
             "stream": stream,
             "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
-            "options": self._generation_options(),
+            "options": self._generation_options(num_predict=num_predict),
         }
 
-    def generate(self, prompt: str, system: str | None = None) -> str:
+    def generate(self, prompt: str, system: str | None = None, *, num_predict: int | None = None) -> str:
         """Send a completion request to Ollama."""
-        payload: dict[str, Any] = {**self._base_payload(stream=False), "prompt": prompt}
+        payload: dict[str, Any] = {
+            **self._base_payload(stream=False, num_predict=num_predict),
+            "prompt": prompt,
+        }
         if system:
             payload["system"] = system
 
@@ -59,9 +64,14 @@ class OllamaClient:
             response.raise_for_status()
             return response.json().get("response", "")
 
-    def generate_stream(self, prompt: str, system: str | None = None) -> Iterator[str]:
+    def generate_stream(
+        self, prompt: str, system: str | None = None, *, num_predict: int | None = None
+    ) -> Iterator[str]:
         """Stream tokens from Ollama (faster perceived response in the UI)."""
-        payload: dict[str, Any] = {**self._base_payload(stream=True), "prompt": prompt}
+        payload: dict[str, Any] = {
+            **self._base_payload(stream=True, num_predict=num_predict),
+            "prompt": prompt,
+        }
         if system:
             payload["system"] = system
 

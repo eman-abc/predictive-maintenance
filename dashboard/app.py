@@ -1,10 +1,18 @@
 """Industrial Predictive Maintenance System — Streamlit Dashboard."""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import streamlit as st
 
+from dashboard.components.databricks_runs import render_databricks_mlflow_panel
+from dashboard.components.phase3_metrics import render_registry_banner
 from dashboard.data_loader import (
     load_fleet_predictions,
     load_phase3_summary,
+    load_training_registry,
     render_dataset_selector,
 )
 from dashboard.page_init import init_page  # noqa: E402 — after streamlit import
@@ -33,6 +41,16 @@ Welcome to the fleet health monitoring dashboard. Use the sidebar to navigate:
 dataset_id = render_dataset_selector()
 fleet = load_fleet_predictions(dataset_id)
 summary = load_phase3_summary(dataset_id)
+registry = load_training_registry()
+
+render_databricks_mlflow_panel(
+    registry,
+    expanded=False,
+    title="Databricks MLflow experiment (Colab runs)",
+)
+
+with st.expander("All FD subsets — training registry", expanded=False):
+    render_registry_banner(registry)
 
 if fleet is not None:
     critical = int((fleet["alert_level"] == "critical").sum())
