@@ -45,6 +45,17 @@ export DATABRICKS_TOKEN=...
 python scripts/report_cmapss_mlflow.py
 ```
 
+## Import Colab zip into the dashboard (local PC)
+
+After downloading `cmapss_colab_outputs.zip` from Colab, unzip into the project root as `cmapss_colab_outputs/` (or any folder), then:
+
+```bash
+python scripts/import_cmapss_colab_outputs.py --source cmapss_colab_outputs --force
+streamlit run dashboard/app.py
+```
+
+This copies **models/**, **artifacts/** (Phase 3 summaries + registry), and **data/processed/** (predictions + trajectories) so the Streamlit UI shows all four FD subsets, Cox survival, anomaly scores, and full model metrics.
+
 ## Model Registry (Databricks → Models)
 
 After Phase 3, registered names (per subset) include:
