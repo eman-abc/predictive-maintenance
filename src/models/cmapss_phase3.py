@@ -35,6 +35,13 @@ from src.models.failure_classifier import FailureClassifier
 from src.models.lstm_model import LSTMModel
 from src.ingestion.cmapss_config import CMAPSS_DATASET_IDS
 from src.models.rul_regressor import RULRegressor
+from src.models.cmapss_survival import (
+    add_survival_columns,
+    evaluate_cox_rul,
+    select_cox_features,
+)
+from src.models.mlflow_registry import register_phase3_models
+from src.models.survival_model import SurvivalModel
 
 load_dotenv()
 
@@ -43,7 +50,7 @@ PROCESSED_DIR = Path(os.getenv("PROCESSED_DATA_DIR", "./data/processed"))
 ARTIFACTS_DIR = Path("artifacts")
 REGISTRY_PATH = ARTIFACTS_DIR / "cmapss_training_registry.json"
 MLFLOW_PIPELINE_TAG = "cmapss_phase3"
-PIPELINE_VERSION = "phase3_v1"
+PIPELINE_VERSION = "phase3_v2"
 LSTM_WINDOW = 30
 VAL_FRACTION = 0.2
 # GBM on full FD002/FD004 row counts can take hours; subsample for fit only.
@@ -52,12 +59,25 @@ GBM_MAX_TRAIN_ROWS = 250_000
 FAILURE_HORIZONS = (30, 72)
 ANOMALY_MIN_RUL_FIT = 30
 ANOMALY_MAX_TRAIN_ROWS = 100_000
+COX_MAX_TRAIN_ROWS = 80_000
+COX_MAX_FEATURES = 40
+RUL_WINNER_CANDIDATES = ("rf", "gbm", "lstm")
 
 
 def _subsample_rows(df: pd.DataFrame, max_rows: int) -> pd.DataFrame:
     if len(df) <= max_rows:
         return df
     return df.sample(n=max_rows, random_state=42)
+
+
+def _training_batch_id(explicit: str | None = None) -> str:
+    """Stable label for one training session (re-runs get a new batch; MLflow keeps all runs)."""
+    if explicit and str(explicit).strip():
+        return str(explicit).strip()
+    env = os.getenv("MLFLOW_TRAINING_BATCH_ID", "").strip()
+    if env:
+        return env
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _mlflow_setup(dataset_id: str) -> str:
@@ -70,16 +90,23 @@ def _mlflow_setup(dataset_id: str) -> str:
 
 def _registry_entry(summary: dict[str, Any], *, mlflow_run_id: str | None) -> dict[str, Any]:
     test_m = summary.get("test_metrics") or {}
+    cox_test = summary.get("cox_test_metrics") or {}
     return {
         "dataset_id": summary["dataset_id"],
         "winner": summary.get("winner"),
         "test_rmse": test_m.get("rmse"),
         "test_nasa_score": test_m.get("rul_score"),
+        "skip_cox": bool(summary.get("skip_cox")),
+        "test_cox_rmse": cox_test.get("rmse"),
+        "test_cox_nasa_score": cox_test.get("rul_score"),
         "predictions_path": summary.get("predictions_path"),
         "summary_json": str(ARTIFACTS_DIR / f"cmapss_{summary['dataset_id']}_phase3_summary.json"),
+        "survival_model": str(MODELS_DIR / f"survival_{summary['dataset_id']}.pkl"),
+        "registered_models": summary.get("registered_models") or {},
         "mlflow_experiment": os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"),
         "mlflow_run_name": f"{summary['dataset_id']}_phase3_summary",
         "mlflow_run_id": mlflow_run_id,
+        "training_batch": summary.get("training_batch"),
         "trained_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -98,6 +125,19 @@ def update_training_registry(summary: dict[str, Any], *, mlflow_run_id: str | No
             "datasets": {},
         }
     registry["updated_at"] = entry["trained_at"]
+    prev = registry["datasets"].get(summary["dataset_id"], {})
+    history = list(prev.get("mlflow_run_history") or [])
+    if prev.get("mlflow_run_id"):
+        history.append(
+            {
+                "mlflow_run_id": prev.get("mlflow_run_id"),
+                "training_batch": prev.get("training_batch"),
+                "trained_at": prev.get("trained_at"),
+                "winner": prev.get("winner"),
+                "test_nasa_score": prev.get("test_nasa_score"),
+            }
+        )
+    entry["mlflow_run_history"] = history[-20:]
     registry["datasets"][summary["dataset_id"]] = entry
     REGISTRY_PATH.write_text(json.dumps(registry, indent=2), encoding="utf-8")
     return REGISTRY_PATH
@@ -109,11 +149,19 @@ def run_phase3_all(
     val_fraction: float = VAL_FRACTION,
     lstm_epochs: int = 15,
     skip_lstm: bool = False,
+    skip_cox: bool = False,
     gbm_max_rows: int | None = None,
     anomaly_max_rows: int | None = None,
+    training_batch: str | None = None,
 ) -> dict[str, Any]:
     """Train and evaluate all requested CMAPSS subsets; update the training registry."""
     ids = list(dataset_ids or CMAPSS_DATASET_IDS)
+    batch_id = _training_batch_id(training_batch)
+    print(
+        f"MLflow training_batch={batch_id!r} — each train creates NEW runs; "
+        "previous experiment runs are not deleted.",
+        flush=True,
+    )
     summaries: dict[str, Any] = {}
     for dataset_id in ids:
         print(f"\n========== CMAPSS Phase 3: {dataset_id} ==========", flush=True)
@@ -122,8 +170,10 @@ def run_phase3_all(
             val_fraction=val_fraction,
             lstm_epochs=lstm_epochs,
             skip_lstm=skip_lstm,
+            skip_cox=skip_cox,
             gbm_max_rows=gbm_max_rows,
             anomaly_max_rows=anomaly_max_rows,
+            training_batch=batch_id,
         )
     return summaries
 
@@ -276,6 +326,42 @@ def _retrain_rul_winner(
     return reg
 
 
+def _train_cox(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    feature_cols: list[str],
+    *,
+    max_rows: int = COX_MAX_TRAIN_ROWS,
+    max_features: int = COX_MAX_FEATURES,
+) -> tuple[SurvivalModel | None, dict[str, float]]:
+    """
+    Cox PH survival baseline (lifelines): median remaining life + survival probabilities.
+
+    Does not replace the RUL regression winner; logged alongside RF/GBM/LSTM.
+    """
+    try:
+        cox_features = select_cox_features(train_df, feature_cols, max_features=max_features)
+        train_surv = add_survival_columns(train_df, is_train=True)
+        cox = SurvivalModel()
+        fit_metrics = cox.fit(
+            train_surv,
+            cox_features,
+            max_rows=max_rows,
+        )
+
+        val_last = last_cycle_per_unit(add_survival_columns(val_df, is_train=True))
+        rul_cox = cox.predict_remaining_rul(val_last, val_last["cycle"].values)
+        val_metrics = evaluate_cox_rul(
+            val_last["rul"].values,
+            rul_cox,
+            concordance=fit_metrics.get("concordance"),
+        )
+        return cox, val_metrics
+    except Exception as exc:
+        print(f"  Cox PH skipped ({exc})", flush=True)
+        return None, {"error": str(exc)}
+
+
 def _train_anomaly_detector(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -311,6 +397,7 @@ def build_fleet_predictions(
     model_name: str,
     failure_clf_72: FailureClassifier | None = None,
     anomaly_detector: AnomalyDetector | None = None,
+    survival_model: SurvivalModel | None = None,
     dataset_id: str = "",
 ) -> pd.DataFrame:
     """Last-cycle predictions + alerts for each test engine."""
@@ -329,6 +416,21 @@ def build_fleet_predictions(
     else:
         anomaly_scores = np.zeros(len(last))
         anomaly_flags = np.zeros(len(last), dtype=int)
+
+    if survival_model is not None:
+        X_surv = last[survival_model.feature_cols].fillna(0)
+        cycles = last["cycle"].values
+        rul_cox = survival_model.predict_remaining_rul(X_surv, cycles)
+        surv_prob_30 = survival_model.predict_survival_probability(
+            X_surv, cycles, horizon=30
+        )
+        surv_prob_72 = survival_model.predict_survival_probability(
+            X_surv, cycles, horizon=72
+        )
+    else:
+        rul_cox = np.full(len(last), np.nan)
+        surv_prob_30 = np.full(len(last), np.nan)
+        surv_prob_72 = np.full(len(last), np.nan)
 
     engine = ThresholdEngine()
 
@@ -363,6 +465,9 @@ def build_fleet_predictions(
                 "cycle": int(last.loc[pos, "cycle"]),
                 "rul_true": float(last.loc[pos, "rul"]),
                 "rul_pred": rul_p,
+                "rul_pred_cox": float(rul_cox[pos]),
+                "survival_prob_30": float(surv_prob_30[pos]),
+                "survival_prob_72": float(surv_prob_72[pos]),
                 "time_to_failure_cycles": assessment.time_to_failure_cycles,
                 "failure_prob_30": fail_30,
                 "failure_prob_72": fail_72,
@@ -391,18 +496,27 @@ def run_phase3(
     val_fraction: float = VAL_FRACTION,
     lstm_epochs: int = 15,
     skip_lstm: bool = False,
+    skip_cox: bool = False,
     gbm_max_rows: int | None = None,
     anomaly_max_rows: int | None = None,
+    training_batch: str | None = None,
 ) -> dict[str, Any]:
     """
     Full Phase 3 pipeline: engine split, model comparison, test eval, fleet export.
 
+    Each call creates a **new** MLflow parent run (and nested runs). Re-training does not
+    delete or overwrite prior runs in the tracking store. Local ``models/`` and fleet
+    Parquet are overwritten with the latest artifacts only.
+
     Fast-training options (still logged to MLflow):
     - ``skip_lstm``: compare RF vs GBM only (CPU-friendly on Colab).
+    - ``skip_cox``: skip lifelines Cox PH (faster runs).
     - ``gbm_max_rows`` / ``anomaly_max_rows``: cap rows used for GBM / Isolation Forest fit.
     """
     gbm_cap = gbm_max_rows if gbm_max_rows is not None else GBM_MAX_TRAIN_ROWS
     anomaly_cap = anomaly_max_rows if anomaly_max_rows is not None else ANOMALY_MAX_TRAIN_ROWS
+    batch_id = _training_batch_id(training_batch)
+    source = os.getenv("CMAPSS_SOURCE", "local")
 
     _mlflow_setup(dataset_id)
     MODELS_DIR.mkdir(exist_ok=True)
@@ -434,12 +548,19 @@ def run_phase3(
                 "pipeline_version": PIPELINE_VERSION,
                 "dataset_id": dataset_id,
                 "task": "cmapss_rul_failure_anomaly",
+                "training_batch": batch_id,
+                "source": source,
             }
         )
         mlflow.log_param("dataset_id", dataset_id)
+        mlflow.log_param("training_batch", batch_id)
+        mlflow.log_param("source", source)
         mlflow.log_param("val_fraction", val_fraction)
         mlflow.log_param("lstm_window", LSTM_WINDOW)
         mlflow.log_param("skip_lstm", skip_lstm)
+        mlflow.log_param("skip_cox", skip_cox)
+        mlflow.log_param("cox_max_train_rows", COX_MAX_TRAIN_ROWS)
+        mlflow.log_param("cox_max_features", COX_MAX_FEATURES)
         mlflow.log_param("gbm_max_train_rows", gbm_cap)
         mlflow.log_param("anomaly_max_train_rows", anomaly_cap)
         mlflow.log_param("n_features", len(feature_cols))
@@ -471,7 +592,35 @@ def run_phase3(
             mlflow.log_param("lstm_skipped", True)
             print(f"[{dataset_id}] Skipping LSTM (skip_lstm=True)", flush=True)
 
-        winner = rank_models(val_results)
+        cox_model: SurvivalModel | None = None
+        cox_val_metrics: dict[str, float] = {}
+        if not skip_cox:
+            print(f"[{dataset_id}] Training Cox PH survival (lifelines)...", flush=True)
+            with mlflow.start_run(run_name=f"{dataset_id}_rul_cox", nested=True):
+                cox_model, cox_val_metrics = _train_cox(
+                    train_df, val_df, feature_cols, max_rows=COX_MAX_TRAIN_ROWS
+                )
+                mlflow.log_param("model_type", "cox_ph")
+                mlflow.log_param("cox_max_train_rows", COX_MAX_TRAIN_ROWS)
+                mlflow.log_param("cox_max_features", COX_MAX_FEATURES)
+                if "error" not in cox_val_metrics:
+                    if cox_model is not None:
+                        mlflow.log_param("n_cox_features", len(cox_model.feature_cols))
+                    for key, value in cox_val_metrics.items():
+                        if isinstance(value, (int, float)):
+                            mlflow.log_metric(f"val_{key}", float(value))
+                    val_results["cox"] = {
+                        k: v for k, v in cox_val_metrics.items() if k in ("rmse", "rul_score", "mae")
+                    }
+                else:
+                    mlflow.log_param("cox_error", cox_val_metrics["error"])
+        else:
+            mlflow.log_param("cox_skipped", True)
+
+        rul_candidates = {
+            k: v for k, v in val_results.items() if k in RUL_WINNER_CANDIDATES
+        }
+        winner = rank_models(rul_candidates)
         print(f"[{dataset_id}] Winner: {winner} (val NASA {val_results[winner]['rul_score']:.2f})", flush=True)
         mlflow.log_param("winner", winner)
         mlflow.log_metrics(
@@ -544,6 +693,18 @@ def run_phase3(
         )
         anomaly_det.save(MODELS_DIR / f"anomaly_{dataset_id}.pkl")
 
+        if cox_model is not None:
+            train_surv = add_survival_columns(train_full, is_train=True)
+            cox_model.fit(
+                train_surv,
+                cox_model.feature_cols,
+                max_rows=COX_MAX_TRAIN_ROWS,
+            )
+            surv_path = MODELS_DIR / f"survival_{dataset_id}.pkl"
+            cox_model.save(surv_path)
+            mlflow.log_artifact(str(surv_path), artifact_path="models")
+            print(f"[{dataset_id}] Saved Cox model", flush=True)
+
         test_last = last_cycle_per_unit(test_df)
         failure_clf_test_metrics = {
             "failure_30": _eval_failure_classifier(
@@ -594,11 +755,44 @@ def run_phase3(
             flush=True,
         )
         mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
+
+        cox_test_metrics: dict[str, float] = {}
+        if cox_model is not None:
+            X_test_surv = test_last[cox_model.feature_cols].fillna(0)
+            rul_cox_test = cox_model.predict_remaining_rul(
+                X_test_surv, test_last["cycle"].values
+            )
+            cox_test_metrics = evaluate_cox_rul(
+                test_last["rul"].values, rul_cox_test
+            )
+            print(
+                f"[{dataset_id}] Cox test RMSE={cox_test_metrics['rmse']:.2f} "
+                f"NASA={cox_test_metrics['rul_score']:.2f} "
+                f"(winner {winner} NASA={test_metrics['rul_score']:.2f})",
+                flush=True,
+            )
+            for key, value in cox_test_metrics.items():
+                if isinstance(value, (int, float)):
+                    mlflow.log_metric(f"test_cox_{key}", float(value))
+
         for label_col, m in failure_clf_test_metrics.items():
             for key, value in m.items():
                 if key == "eval_protocol" or not isinstance(value, (int, float)):
                     continue
                 mlflow.log_metric(f"test_{label_col}_{key}", float(value))
+
+        registered_models = register_phase3_models(
+            dataset_id,
+            winner=winner,
+            feature_cols=feature_cols,
+            sample_df=train_full,
+            training_batch=batch_id,
+            best_rul=best_rul,
+            failure_clf=failure_clf,
+            failure_clf_72=failure_clf_72,
+            anomaly_det=anomaly_det,
+            cox_model=cox_model,
+        )
 
         fleet = build_fleet_predictions(
             test_df,
@@ -608,6 +802,7 @@ def run_phase3(
             model_name=winner,
             failure_clf_72=failure_clf_72,
             anomaly_detector=anomaly_det,
+            survival_model=cox_model,
             dataset_id=dataset_id,
         )
         pred_path = PROCESSED_DIR / f"cmapss_{dataset_id}_predictions.parquet"
@@ -615,11 +810,16 @@ def run_phase3(
 
         summary = {
             "dataset_id": dataset_id,
+            "training_batch": batch_id,
             "winner": winner,
             "skip_lstm": skip_lstm,
+            "skip_cox": skip_cox,
             "gbm_max_train_rows": gbm_cap,
             "anomaly_max_train_rows": anomaly_cap,
             "val_metrics": val_results,
+            "cox_val_metrics": cox_val_metrics,
+            "cox_test_metrics": cox_test_metrics,
+            "registered_models": registered_models,
             "test_metrics": test_metrics,
             "failure_clf_val_metrics": failure_clf_val_metrics,
             "failure_clf_test_metrics": failure_clf_test_metrics,

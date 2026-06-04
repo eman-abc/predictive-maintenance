@@ -27,6 +27,7 @@ def main() -> None:
     parser.add_argument("--lstm-epochs", type=int, default=15)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--skip-lstm", action="store_true")
+    parser.add_argument("--skip-cox", action="store_true")
     parser.add_argument("--gbm-max-rows", type=int, default=None)
     parser.add_argument("--anomaly-max-rows", type=int, default=None)
     args = parser.parse_args()
@@ -41,6 +42,7 @@ def main() -> None:
         val_fraction=args.val_fraction,
         lstm_epochs=args.lstm_epochs,
         skip_lstm=args.skip_lstm,
+        skip_cox=args.skip_cox,
         gbm_max_rows=args.gbm_max_rows,
         anomaly_max_rows=args.anomaly_max_rows,
     )

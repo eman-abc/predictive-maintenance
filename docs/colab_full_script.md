@@ -91,7 +91,7 @@ for z in Path("/content").glob("*.zip"):
 ```python
 import os
 os.environ["CMAPSS_UPLOAD_DIR"] = CMAPSS_UPLOAD_DIR
-!python scripts/cmapss_colab_train.py --fast --upload-dir /content/cmapss_upload
+!python scripts/cmapss_colab_train.py --fast --datasets FD001 FD002 FD003 FD004 --upload-dir /content/cmapss_upload --mlflow-databricks
 ```
 
 ---

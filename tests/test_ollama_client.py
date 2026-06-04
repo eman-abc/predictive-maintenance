@@ -48,6 +48,19 @@ def test_build_instant_briefing():
     assert "34%" in text or "0.34" in text.lower() or "34" in text
 
 
+def test_build_instant_briefing_includes_cox():
+    text = build_instant_briefing(
+        "ENG-001",
+        72.0,
+        25.0,
+        0.34,
+        rul_pred_cox=30.0,
+        survival_prob_30=0.55,
+    )
+    assert "Cox" in text
+    assert "30" in text
+
+
 @patch("src.briefings.ollama_client.httpx.Client")
 def test_generate_calls_ollama_api(mock_client_cls):
     mock_response = MagicMock()

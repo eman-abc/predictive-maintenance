@@ -14,6 +14,7 @@ Full quality (slower):
 Environment overrides:
   CMAPSS_COLAB_SKIP_BUILD=1   skip Phase 2 if Parquet exists
   CMAPSS_COLAB_SKIP_LSTM=1    same as --skip-lstm
+  CMAPSS_COLAB_SKIP_COX=1     same as --skip-cox
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import argparse
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +50,11 @@ def main() -> None:
     parser.add_argument("--fast", action="store_true", help="skip-lstm + smaller GBM subsample")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-lstm", action="store_true")
+    parser.add_argument(
+        "--skip-cox",
+        action="store_true",
+        help="Skip Cox PH survival model (still logs skip_cox on MLflow parent run)",
+    )
     parser.add_argument("--lstm-epochs", type=int, default=15)
     parser.add_argument("--gbm-max-rows", type=int, default=None)
     parser.add_argument("--anomaly-max-rows", type=int, default=None)
@@ -67,19 +74,36 @@ def main() -> None:
         action="store_true",
         help="Require DATABRICKS_HOST + DATABRICKS_TOKEN in environment",
     )
+    parser.add_argument(
+        "--run-label",
+        default=None,
+        help=(
+            "MLflow training_batch tag for this session (e.g. uc5_colab_v1). "
+            "Default: colab-YYYYMMDDTHHMMSSZ. Re-runs create new runs; old runs stay in the experiment."
+        ),
+    )
     args = parser.parse_args()
 
     if os.getenv("CMAPSS_COLAB_SKIP_BUILD", "").lower() in ("1", "true", "yes"):
         args.skip_build = True
     if os.getenv("CMAPSS_COLAB_SKIP_LSTM", "").lower() in ("1", "true", "yes"):
         args.skip_lstm = True
+    if os.getenv("CMAPSS_COLAB_SKIP_COX", "").lower() in ("1", "true", "yes"):
+        args.skip_cox = True
 
     skip_lstm = args.skip_lstm or args.fast
+    skip_cox = args.skip_cox
     gbm_max = args.gbm_max_rows or (100_000 if args.fast else None)
     anomaly_max = args.anomaly_max_rows or (50_000 if args.fast else None)
     lstm_epochs = 5 if args.fast else args.lstm_epochs
 
     os.chdir(ROOT)
+
+    batch_id = (args.run_label or "").strip() or datetime.now(timezone.utc).strftime(
+        "colab-%Y%m%dT%H%M%SZ"
+    )
+    os.environ["MLFLOW_TRAINING_BATCH_ID"] = batch_id
+    os.environ["CMAPSS_SOURCE"] = "colab"
 
     tracking = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
     if args.mlflow_databricks or tracking == "databricks":
@@ -97,10 +121,11 @@ def main() -> None:
         tracking = "databricks"
 
     print(f"Project root: {ROOT}")
+    print(f"MLflow training_batch: {batch_id} (each Colab train adds runs; prior runs are kept)")
     print(f"MLflow tracking: {tracking} -> {os.getenv('MLFLOW_EXPERIMENT_NAME', 'predictive_maintenance')}")
     print(_cuda_info())
     print(
-        f"Mode: {'fast' if args.fast else 'full'} | skip_lstm={skip_lstm} | "
+        f"Mode: {'fast' if args.fast else 'full'} | skip_lstm={skip_lstm} | skip_cox={skip_cox} | "
         f"gbm_max_rows={gbm_max or 'default'} | datasets={args.datasets}",
         flush=True,
     )
@@ -125,8 +150,10 @@ def main() -> None:
         args.datasets,
         lstm_epochs=lstm_epochs,
         skip_lstm=skip_lstm,
+        skip_cox=skip_cox,
         gbm_max_rows=gbm_max,
         anomaly_max_rows=anomaly_max,
+        training_batch=batch_id,
     )
 
     print("\n=== Verification ===", flush=True)

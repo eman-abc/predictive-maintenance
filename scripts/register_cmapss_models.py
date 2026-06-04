@@ -1,0 +1,136 @@
+#!/usr/bin/env python
+"""
+Register on-disk CMAPSS models into MLflow Model Registry (Databricks or local).
+
+Use after Colab training if registration was skipped, or to re-register from a zip.
+
+  python scripts/register_cmapss_models.py --datasets FD001 FD002 FD003 FD004
+  python scripts/register_cmapss_models.py --dataset FD001 --run-label uc5_reregister_v1
+
+Requires MLFLOW_TRACKING_URI (e.g. databricks) and credentials in the environment.
+Set MLFLOW_REGISTER_MODELS=0 to dry-run (script exits without registering).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from dotenv import load_dotenv
+
+load_dotenv(ROOT / ".env")
+
+from src.ingestion.cmapss_config import CMAPSS_DATASET_IDS  # noqa: E402
+from src.models.mlflow_registry import (  # noqa: E402
+    register_models_from_disk,
+    registry_enabled,
+    registry_log_only,
+    setup_model_registry_uri,
+)
+from src.utils.databricks_uc import resolve_uc_catalog_schema  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Register CMAPSS models in MLflow Model Registry")
+    parser.add_argument("--dataset", default=None)
+    parser.add_argument("--datasets", nargs="+", default=None)
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument(
+        "--run-label",
+        default=None,
+        help="training_batch tag on the registration run",
+    )
+    parser.add_argument(
+        "--mlflow-databricks",
+        action="store_true",
+        help="Require DATABRICKS_HOST + DATABRICKS_TOKEN",
+    )
+    args = parser.parse_args()
+
+    if args.mlflow_databricks:
+        if not os.getenv("DATABRICKS_HOST") or not os.getenv("DATABRICKS_TOKEN"):
+            print("Set DATABRICKS_HOST and DATABRICKS_TOKEN", file=sys.stderr)
+            sys.exit(1)
+        os.environ["MLFLOW_TRACKING_URI"] = "databricks"
+
+    if args.run_label:
+        os.environ["MLFLOW_TRAINING_BATCH_ID"] = args.run_label
+
+    if not registry_enabled():
+        print("MLFLOW_REGISTER_MODELS=0 — nothing to do.")
+        sys.exit(0)
+
+    if registry_log_only():
+        print(
+            "MLFLOW_REGISTER_MODELS=log_only — models logged under each run, "
+            "not registered in Unity Catalog.",
+            flush=True,
+        )
+
+    if args.all:
+        datasets = list(CMAPSS_DATASET_IDS)
+    elif args.datasets:
+        datasets = args.datasets
+    elif args.dataset:
+        datasets = [args.dataset]
+    else:
+        datasets = list(CMAPSS_DATASET_IDS)
+
+    import mlflow
+
+    uri = os.getenv("MLFLOW_TRACKING_URI", "./mlruns")
+    mlflow.set_tracking_uri(uri)
+    mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "predictive_maintenance"))
+    reg_uri = setup_model_registry_uri()
+    print(f"MLflow registry URI: {reg_uri}", flush=True)
+    if reg_uri == "log_only":
+        print("Skipping Unity Catalog registry (log_only mode).", flush=True)
+    elif reg_uri == "databricks-uc" and uri == "databricks":
+        try:
+            cat, sch, meta = resolve_uc_catalog_schema()
+            os.environ["MLFLOW_UC_CATALOG"] = cat
+            os.environ["MLFLOW_UC_SCHEMA"] = sch
+            if meta.get("catalog_requested") and meta["catalog_requested"] != cat:
+                print(
+                    f"NOTE: catalog {meta['catalog_requested']!r} missing → using {cat!r}",
+                    flush=True,
+                )
+            print(f"UC model names: {cat}.{sch}.cmapss_<role>_FD00X", flush=True)
+        except Exception as exc:
+            print(f"FAIL: Unity Catalog discovery: {exc}", file=sys.stderr)
+            print("Run: python scripts/diagnose_databricks_registry.py", file=sys.stderr)
+            sys.exit(1)
+
+    all_registered: dict[str, dict] = {}
+    failed = 0
+    for ds in datasets:
+        print(f"\n=== Register {ds} ===", flush=True)
+        try:
+            all_registered[ds] = register_models_from_disk(ds, training_batch=args.run_label)
+            if not all_registered[ds]:
+                failed += 1
+        except Exception as exc:
+            print(f"[{ds}] FAILED: {exc}", flush=True)
+            all_registered[ds] = {}
+            failed += 1
+
+    print("\nDone. In Databricks: Catalog Explorer → your catalog → schema → Models", flush=True)
+    for ds, reg in all_registered.items():
+        if reg:
+            print(f"  {ds}: {', '.join(v['name'] for v in reg.values())}")
+        else:
+            print(f"  {ds}: (no models registered — check models/ and summary JSON)")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"\nRegistration aborted: {exc}", file=sys.stderr)
+        print("Run: python scripts/diagnose_databricks_registry.py", file=sys.stderr)
+        sys.exit(1)
