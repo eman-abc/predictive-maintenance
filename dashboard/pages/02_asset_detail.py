@@ -74,7 +74,15 @@ with col1:
             "Isolation Forest vs healthy training cycles (RUL≥30). "
             f"Flagged: {'yes' if row.get('is_anomaly', 0) else 'no'}"
         )
-    st.metric("Alert Level", row["alert_level"].upper())
+    from dashboard.theme import alert_level_color
+
+    level = str(row["alert_level"]).lower()
+    st.markdown(
+        f"**Alert level:** "
+        f"<span style='color:{alert_level_color(level)};font-weight:700'>"
+        f"{level.upper()}</span>",
+        unsafe_allow_html=True,
+    )
 
 with col2:
     if trajectory is not None and "rul" in trajectory.columns:

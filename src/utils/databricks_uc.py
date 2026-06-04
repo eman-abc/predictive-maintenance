@@ -54,6 +54,16 @@ def pick_uc_catalog(catalogs: list[str], preferred: str | None = None) -> str | 
     return catalogs[0] if catalogs else None
 
 
+def pick_cmms_catalog(catalogs: list[str], preferred: str | None = None) -> str | None:
+    """Prefer workspace (user catalog) over sample data catalogs for CMMS tables."""
+    if preferred and preferred in catalogs:
+        return preferred
+    for name in ("workspace", "main"):
+        if name in catalogs:
+            return name
+    return pick_uc_catalog(catalogs, preferred)
+
+
 def pick_uc_schema(schemas: list[str], preferred: str | None = None) -> str | None:
     if preferred and preferred in schemas:
         return preferred

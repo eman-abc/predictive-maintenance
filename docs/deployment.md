@@ -1,332 +1,485 @@
-# Deployment Plan ??? 5-Person Live Demo
+# Deployment Guide — UC5 Live Demo
 
-This document is the **implementation checklist** for turning the current research prototype into a **deployment-shaped** system suitable for a **live demo with ~5 concurrent users**. The **local Streamlit + Parquet + Ollama demo** lives on **`main`**; all deployment work below happens on branch **`deployment`**.
+This document takes the project from **local development** to a **public interview URL** while preserving a clear **three-layer architecture**:
 
----
+| Layer | Role | Technology |
+|-------|------|------------|
+| **Frontend (thin client)** | UI only — charts, tables, buttons | Streamlit + Plotly |
+| **Backend (API)** | Business logic, data access, alert rules, CMMS | FastAPI |
+| **AI layer** | LLM inference (isolated) | Ollama (`llama3.2`) |
 
-## Goals
-
-| Goal | Success criteria |
-|------|------------------|
-| **Stable demo** | 5 people can use the UI at once without crashes or duplicate Ollama loads |
-| **???Real-time??? feel** | Fleet health and alerts update every N seconds (replay or ingest) |
-| **Clear architecture** | Streamlit ??? API ??? services ??? DB/models (panel-ready diagram + OpenAPI) |
-| **UC5 coverage** | Ingestion, ML, alerts, briefings, dashboard ??? each with an API contract |
-| **Recoverable** | One-command startup, documented fallback (instant briefings only, cached fleet) |
+**Inference / training** stays **offline** (batch Phase 3 → predictions parquet). The deployed stack **serves** precomputed scores and calls the AI layer only for briefings and metric explanations.
 
 ---
 
-## What exists today (baseline)
+## Does a tunneled local stack “count” as proper architecture?
 
-- [x] CMAPSS Phase 2/3 pipeline, models, MLflow logging
-- [x] Fleet predictions Parquet + Streamlit pages (fleet, asset, alerts, metrics)
-- [x] Alert thresholds + UC5 payload fields (`alert_payload.py`, `docs/cmapss_alerts_cmms.md`)
-- [x] Ollama briefings (instant + AI) in Streamlit
-- [ ] REST API, persistence, multi-user inference service, telemetry replay
+**Yes — if you deploy the three layers as separate services**, not as a single fat Streamlit process.
 
-**Important:** CMAPSS is **historical batch data**. ???Real-time??? for the demo means **replay or simulation**, not true plant MQTT unless scoped as Phase 2.
+| Setup | Public URL? | Architecture story |
+|-------|-------------|-------------------|
+| Tunnel → monolithic Streamlit (reads parquet + calls Ollama in-process) | Yes | **Weak** — looks like one app; hard to defend “thin client + API + AI” |
+| **Docker Compose** (Ollama + FastAPI + Streamlit) + tunnel to one entrypoint | Yes | **Strong** — same diagram as production; tunnel is only transport |
+| Streamlit on Render + API on Render + Ollama on laptop via tunnel | Yes | **Strong** — “private LLM endpoint”; more moving parts |
+
+**Recommended for this repo:** Compose on your laptop (8 GB RAM for Ollama) + **one HTTPS tunnel** to a small **reverse proxy** (or Streamlit with `API_BASE_URL` pointing at internal `http://api:8000`).
+
+Interviewers see **one URL**. You show:
+
+- **Fleet UI** — frontend
+- **`https://<demo>/api/docs`** — backend contract (optional but impressive)
+- **Architecture slide** — three boxes + “batch training offline”
+
+Latency through ngrok/Cloudflare is usually **fine for a demo** (tens of ms extra; Ollama dominates briefing time).
 
 ---
 
-## Target architecture
+## Target runtime architecture
 
-```mermaid
-flowchart TB
-  subgraph users [5 demo users]
-    UI[Streamlit UI :8501]
-  end
-  subgraph edge [Edge]
-    RP[Reverse proxy optional]
-  end
-  subgraph api [Backend]
-    BFF[FastAPI BFF :8000]
-  end
-  subgraph svc [Services]
-    INF[Inference service]
-    ALT[Alert service]
-    BRF[Briefing service]
-    REP[Replay worker]
-  end
-  subgraph data [Data]
-    DB[(Postgres or SQLite)]
-    OBJ[Parquet / model artifacts]
-  end
-  subgraph ai [AI]
-    OLL[Ollama :11434]
-    MLF[MLflow optional :5000]
-  end
-  UI --> RP --> BFF
-  BFF --> INF
-  BFF --> ALT
-  BFF --> BRF
-  REP --> INF
-  INF --> OBJ
-  INF --> DB
-  ALT --> DB
-  BRF --> OLL
-  BRF --> DB
+```
+                    Internet (interviewers)
+                              │
+                    Cloudflare Tunnel / ngrok
+                              │
+                    ┌─────────▼─────────┐
+                    │  Reverse proxy     │  optional: Caddy/nginx
+                    │  :443 → routes     │  / → Streamlit :8501
+                    └─────────┬─────────┘  /api → FastAPI :8000
+                              │
+         ┌────────────────────┼────────────────────┐
+         │                    │                    │
+         ▼                    ▼                    ▼
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │  dashboard   │    │     api      │    │    ollama    │
+  │  Streamlit   │───▶│   FastAPI    │───▶│  :11434      │
+  │  thin client │    │   :8000      │    │  llama3.2    │
+  └──────────────┘    └──────┬───────┘    └──────────────┘
+                             │
+                    reads (volume mount)
+                    data/processed/*.parquet
+                    artifacts/*.json
 ```
 
-**Rule:** Streamlit **only** talks to the API (no direct `read_parquet`, no `import src.models` in pages).
+**Rules**
+
+- Streamlit **never** reads parquet or calls Ollama directly.
+- FastAPI is the **only** service that talks to Ollama (`OLLAMA_BASE_URL=http://ollama:11434`).
+- No model training or batch scoring in the request path.
 
 ---
 
-## Branch & repo workflow
+## Prerequisites
+
+| Item | Notes |
+|------|--------|
+| Docker Desktop | Windows/macOS/Linux |
+| Ollama (host or container) | `ollama pull llama3.2` |
+| Colab outputs imported | See Phase 0 |
+| `.env` | Copy from `.env.example` |
+| ~8 GB free RAM | For Ollama + API + Streamlit |
+| Cloudflare Tunnel or ngrok | For public HTTPS URL |
+
+**Not required for demo:** Render, Kubernetes, live CMMS, Unity Catalog registration.
+
+---
+
+## Phase 0 — Demo data on disk
+
+The dashboard and API expect artifacts at the **repo root**, not only under `cmapss_colab_outputs/`:
+
+```powershell
+cd C:\Users\emana\predictive-maintenance
+. .venv\Scripts\activate.ps1
+python scripts/import_cmapss_colab_outputs.py --force
+```
+
+Verify:
+
+```powershell
+dir data\processed\cmapss_FD001_predictions.parquet
+dir artifacts\cmapss_FD001_phase3_summary.json
+dir models\rul_gbm_FD001.pkl
+```
+
+**Interview minimum:** FD001–FD004 all imported (~500 MB).  
+**Render free fallback:** FD001 only if you later deploy a slim cloud UI.
+
+---
+
+## Phase 1 — FastAPI backend (new)
+
+### 1.1 Dependencies
+
+Add to `requirements.txt` (or `requirements-api.txt`):
+
+```text
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+```
+
+### 1.2 Suggested layout
+
+```text
+src/api/
+  __init__.py
+  main.py              # FastAPI app, CORS, lifespan (Ollama warmup)
+  deps.py              # shared paths, dataset_id validation
+  routes/
+    health.py
+    fleet.py
+    assets.py
+    alerts.py
+    metrics.py
+    briefings.py
+    cmms.py
+src/services/
+  fleet_service.py     # move logic from dashboard/data_loader.py
+  alerts_service.py    # ThresholdEngine + payload build
+  metrics_service.py   # phase3 summaries, registry
+  briefing_service.py  # wraps OllamaClient + metric_explanation_prompts
+```
+
+### 1.3 API contract (v1)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Liveness + Ollama reachable flag |
+| `GET` | `/datasets` | List FD subsets with predictions |
+| `GET` | `/fleet?dataset=FD001` | Fleet table rows |
+| `GET` | `/assets/{asset_id}?dataset=FD001` | Asset detail + sensor series |
+| `GET` | `/alerts?dataset=FD001` | Active alerts |
+| `GET` | `/metrics/phase3?dataset=FD001` | Phase 3 summary JSON |
+| `GET` | `/metrics/registry` | Training registry |
+| `GET` | `/mlflow/links?dataset=FD001` | Databricks run URLs (if configured) |
+| `POST` | `/briefings` | Body: asset context → briefing text |
+| `POST` | `/metrics/explain` | Body: `section`, `dataset` → explanation |
+| `POST` | `/cmms/workorders` | Alert payload → mock CMMS response |
+
+Reuse existing modules:
+
+- `src/alerts/threshold_engine.py`, `alert_payload.py`, `cmms_mock.py`
+- `src/briefings/ollama_client.py`, `metric_explanation_prompts.py`
+- `dashboard/mlflow_links.py` (or move to `src/services/mlflow_links.py`)
+
+### 1.4 Run locally (before Docker)
+
+```powershell
+$env:OLLAMA_BASE_URL = "http://localhost:11434"
+uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Open `http://localhost:8000/docs` and smoke-test `/health`, `/fleet?dataset=FD001`.
+
+### 1.5 Tests
+
+```powershell
+pytest tests/test_api_health.py tests/test_api_fleet.py
+```
+
+Add minimal API tests with `TestClient` and fixture parquet under `tests/fixtures/` (or skip if FD001 data missing).
+
+---
+
+## Phase 2 — Thin Streamlit client
+
+### 2.1 Environment
+
+```env
+API_BASE_URL=http://localhost:8000
+```
+
+In Docker Compose (internal network):
+
+```env
+API_BASE_URL=http://api:8000
+```
+
+### 2.2 Refactor rule
+
+Replace direct use of `dashboard/data_loader.py` parquet reads with an HTTP client module, e.g. `dashboard/api_client.py`:
+
+- `get_datasets()`, `get_fleet(dataset)`, `get_asset(...)`, `get_alerts(...)`, etc.
+- Keep **Plotly** and layout code in pages; only data fetching changes.
+
+Pages to update:
+
+- `dashboard/app.py`
+- `dashboard/pages/01_fleet_overview.py`
+- `dashboard/pages/02_asset_detail.py`
+- `dashboard/pages/03_active_alerts.py`
+- `dashboard/pages/04_model_metrics.py`
+
+Briefings and metric **Explain** buttons call `POST` on the API (not `get_ollama_client()` in Streamlit).
+
+### 2.3 Run locally (two terminals)
+
+```powershell
+# Terminal 1
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+# Terminal 2
+$env:API_BASE_URL = "http://localhost:8000"
+streamlit run dashboard/app.py --server.port 8501
+```
+
+### 2.4 Acceptance
+
+- [ ] Sidebar dataset switch works for all imported FD subsets
+- [ ] Asset briefing and Model Metrics Explain hit API (network tab or API logs)
+- [ ] Ollama stopped → instant/template fallback still returns text
+- [ ] Streamlit container/process has **no** `OLLAMA_BASE_URL` required
+
+---
+
+## Phase 3 — Docker Compose
+
+### 3.1 Files to add
+
+```text
+docker/
+  api/Dockerfile
+  dashboard/Dockerfile
+docker-compose.yml
+docker-compose.demo.yml   # optional: FD001-only slim image
+.env.docker.example
+```
+
+### 3.2 Example `docker-compose.yml`
+
+```yaml
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"   # optional: debug from host only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    env_file: .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - ./data/processed:/app/data/processed:ro
+      - ./artifacts:/app/artifacts:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/dashboard/Dockerfile
+    environment:
+      API_BASE_URL: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+
+volumes:
+  ollama_data:
+```
+
+### 3.3 First-time Ollama model pull
+
+After `docker compose up -d ollama`:
+
+```powershell
+docker compose exec ollama ollama pull llama3.2
+```
+
+Or bake into a custom `docker/ollama/Dockerfile` with `ollama pull` at build time (larger image, faster first demo).
+
+### 3.4 API image notes
+
+- Use `requirements-api.txt` without `torch` if API only serves parquet (smaller image).
+- Working directory `/app`, `PYTHONPATH=/app`.
+- CMD: `uvicorn src.api.main:app --host 0.0.0.0 --port 8000`
+
+### 3.5 Dashboard image notes
+
+- Lighter deps: `streamlit`, `plotly`, `httpx`, `pandas` (for display only if needed).
+- CMD: `streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0`
+
+### 3.6 Run stack
+
+```powershell
+docker compose up --build
+```
+
+Verify:
+
+- UI: `http://localhost:8501`
+- API docs: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/health`
+
+---
+
+## Phase 4 — Single public URL (tunnel)
+
+Expose **one HTTPS URL** to interviewers. Two patterns:
+
+### Option A — Tunnel Streamlit only (simplest)
+
+- Tunnel port **8501** → public URL.
+- Streamlit uses `API_BASE_URL=http://api:8000` on the **Docker internal network** (works inside Compose).
+- For panel: share Streamlit URL; optionally share API docs via second tunnel on **8000** or “localhost only” during screen share.
+
+**Cloudflare Tunnel (quick):**
+
+```powershell
+cloudflared tunnel --url http://localhost:8501
+```
+
+**ngrok:**
+
+```powershell
+ngrok http 8501
+```
+
+### Option B — Reverse proxy + one tunnel (best architecture demo)
+
+Add a **Caddy** or **nginx** service in Compose:
+
+| Path | Backend |
+|------|---------|
+| `/` | `dashboard:8501` |
+| `/api` | `api:8000` |
+
+Tunnel port **443/80** on the proxy. Interviewers get:
+
+- App: `https://<random>.trycloudflare.com/`
+- API docs: `https://<random>.trycloudflare.com/api/docs`
+
+Set `API_BASE_URL` to the **public** `/api` prefix for browser-side calls, or keep internal URL for server-side Streamlit→API (preferred: Streamlit server-side calls `http://api:8000`, browser only talks to Streamlit).
+
+### Tunnel checklist (day of interview)
+
+- [ ] Laptop plugged in, sleep disabled
+- [ ] `docker compose up` healthy
+- [ ] `ollama list` shows `llama3.2`
+- [ ] Open public URL on **phone** (not same machine) — test fleet + one briefing
+- [ ] Copy URL into slide; keep `http://localhost:8501` as backup
+- [ ] If tunnel dies: restart tunnel; fallback to screen share
+
+### Is the tunnel slow?
+
+Usually **acceptable** (~50–200 ms extra). Ollama generation (seconds) dominates. Render free cold starts are often **worse** than a warm local stack through a tunnel.
+
+---
+
+## Phase 5 — Optional cloud frontend (Render)
+
+Use only if you want a **second** always-on URL without your laptop.
+
+| Service | Render plan | Role |
+|---------|-------------|------|
+| Dashboard | Free (512 MB) | Thin client; `API_BASE_URL` → your laptop tunnel **or** cloud API |
+| API | Free / Starter | Not viable with Ollama on same 512 MB instance |
+
+**Realistic Render setup:** API + Streamlit on Render, `OLLAMA_BASE_URL` → Cloudflare tunnel to **laptop Ollama** during interview (laptop must stay on). Otherwise use **instant** briefings on Render only.
+
+**Not recommended:** Full FD001–FD004 parquet in Render free image (size + RAM).
+
+---
+
+## Environment variables
+
+| Variable | Used by | Example (Compose) |
+|----------|---------|-------------------|
+| `API_BASE_URL` | Streamlit | `http://api:8000` |
+| `OLLAMA_BASE_URL` | FastAPI only | `http://ollama:11434` |
+| `OLLAMA_MODEL` | FastAPI | `llama3.2` |
+| `OLLAMA_NUM_PREDICT_METRICS` | FastAPI | `320` |
+| `DATABRICKS_HOST` | API (optional) | From `.env` |
+| `DATABRICKS_TOKEN` | API (optional) | From `.env` |
+| `MLFLOW_EXPERIMENT_ID` | API / metrics | Registry fallback |
+| `ALERT_RUL_WARNING` etc. | API alerts | From `.env.example` |
+| `CMMS_API_URL` | API | Mock default |
+
+Never commit `.env` with tokens.
+
+---
+
+## Git branches
 
 | Branch | Purpose |
 |--------|---------|
-| **`main`** | Stable app: pipeline, dashboard, briefings, MLflow/Colab |
-| **`deployment`** | API, DB, replay worker, Docker, Streamlit thin client + this checklist |
+| `main` | Feature development |
+| `deployment` | `docker-compose.yml`, Dockerfiles, `src/api/`, thin client, `docs/deployment.md` |
 
-```powershell
-# Work on deployment (keep in sync with main)
-git checkout deployment
-git merge main
-
-# Run local demo
-git checkout main
-streamlit run dashboard/app.py --server.port 8502
-```
-
-**Optional:** second clone of the repo for demo day so deployment experiments never touch the demo folder.
+Merge `main` → `deployment` when Phases 1–4 pass local acceptance.
 
 ---
 
-## Phase 0 ??? Prerequisites (before coding)
+## Completion checklist
 
-- [ ] **P0.1** Merge or tag stable demo on `main` (`git tag demo-2026-06-02`)
-- [ ] **P0.2** Pin demo dataset: `FD001` (+ optional `FD003`) ??? document in runbook
-- [ ] **P0.3** Train and freeze model artifacts; record paths in `artifacts/demo_manifest.json`
-- [ ] **P0.4** Add `mlflow.db` to `.gitignore` (local only)
-- [ ] **P0.5** Define demo environment variables in `.env.example` + `deploy/.env.demo.example`
-- [ ] **P0.6** Agree replay speed (e.g. 1 cycle every 2s per engine) for ???live??? charts
+### Implementation
 
----
+- [ ] Phase 0: `import_cmapss_colab_outputs.py --force`
+- [ ] Phase 1: FastAPI routes + tests
+- [ ] Phase 2: Streamlit uses `API_BASE_URL` only
+- [ ] Phase 3: `docker compose up --build` green
+- [ ] Phase 4: Public tunnel URL tested from phone
 
-## Phase 1 ??? API foundation (FastAPI BFF)
+### Architecture (presentation)
 
-### 1.1 Project layout
+- [ ] Slide: three layers + offline batch training
+- [ ] Live: open `/api/docs` or describe internal `http://api:8000`
+- [ ] Live: one Ollama briefing + one metric Explain
+- [ ] Mention: CMMS mock, Databricks MLflow links, instant LLM fallback
 
-- [ ] **D1.1** Create `api/` package: `main.py`, `routers/`, `schemas/`, `services/`, `deps.py`
-- [ ] **D1.2** Add dependencies: `fastapi`, `uvicorn[standard]`, `pydantic-settings`, `sqlalchemy` (or `sqlmodel`), `alembic`
-- [ ] **D1.3** Wire `api` to existing `src/` (thin wrappers ??? no logic duplication)
-- [ ] **D1.4** Single entry: `uvicorn api.main:app --host 0.0.0.0 --port 8000`
+### Security (talking points)
 
-### 1.2 OpenAPI contracts (Pydantic)
-
-- [ ] **D1.5** `FleetAsset` ??? mirrors `cmapss_*_predictions.parquet` columns
-- [ ] **D1.6** `AssetTelemetry` ??? cycle + sensor series for charts
-- [ ] **D1.7** `Alert` ??? mirrors `Alert` dataclass + UC5 metadata
-- [ ] **D1.8** `BriefingRequest` / `BriefingResponse` ??? `mode: instant | ai`, `text`, `source`, `generated_at`
-- [ ] **D1.9** `WorkOrder` ??? mirrors `CMMSClient` POST body
-- [ ] **D1.10** Standard `ErrorResponse` ??? `code`, `message`, `detail`
-- [ ] **D1.11** Publish Swagger at `/docs`; export `openapi.json` to `docs/openapi-v1.json`
-
-### 1.3 REST endpoints (v1)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Liveness |
-| GET | `/ready` | Models loaded, DB up, Ollama optional |
-| GET | `/api/v1/fleet` | Fleet snapshot (`?dataset=FD001`) |
-| GET | `/api/v1/assets/{asset_id}` | Latest scores + alert fields |
-| GET | `/api/v1/assets/{asset_id}/telemetry` | Time series for charts |
-| GET | `/api/v1/alerts` | Filter `?level=critical,warning` |
-| POST | `/api/v1/alerts/{id}/ack` | Demo: acknowledge alert |
-| POST | `/api/v1/assets/{asset_id}/briefing` | Body: `{ "mode": "instant" \| "ai" }` |
-| GET | `/api/v1/briefings/{job_id}` | Poll async AI briefing |
-| POST | `/api/v1/workorders` | Create CMMS-style work order |
-| POST | `/api/v1/admin/reload` | Demo-only: reload predictions from pipeline |
-
-- [ ] **D1.12** Implement each endpoint with integration tests (`tests/test_api_*.py`)
-- [ ] **D1.13** API versioning prefix `/api/v1`
-- [ ] **D1.14** CORS: allow Streamlit origin only
-
-### 1.4 Inference service
-
-- [ ] **D1.15** Load models **once** at startup (`lifespan` hook): RUL winner, `failure_30/72`, anomaly
-- [ ] **D1.16** `POST /api/v1/inference/score` ??? score one feature row or `(unit_id, cycle)` from DB
-- [ ] **D1.17** Expose `prediction_version` in fleet responses (cache bust for briefings)
-- [ ] **D1.18** Fallback: if inference fails, return last DB snapshot + `degraded: true`
+- Ollama not exposed publicly (only API on Docker network; tunnel terminates at Streamlit/proxy)
+- Secrets in `.env`, not in git
+- CMAPSS has no PII
 
 ---
 
-## Phase 2 ??? Persistence
+## Troubleshooting
 
-### 2.1 Database
-
-- [ ] **D2.1** Choose **SQLite** (fastest demo setup) or **Postgres** (more ???production??? story)
-- [ ] **D2.2** Tables: `assets`, `predictions_latest`, `telemetry_points`, `alerts`, `briefings`, `work_orders`, `demo_clock`
-- [ ] **D2.3** Alembic migration `001_initial`
-- [ ] **D2.4** Seed script: load existing `data/processed/cmapss_FD001_predictions.parquet` into DB
-
-### 2.2 Alert persistence
-
-- [ ] **D2.5** On (re)score: run `ThresholdEngine` + `enrich_assessment` ??? upsert alert row
-- [ ] **D2.6** Dedupe: one open alert per `(asset_id, alert_type)` or supersede pattern
-- [ ] **D2.7** `GET /alerts` reads from DB, not Parquet
+| Symptom | Fix |
+|---------|-----|
+| Empty fleet | Run import script; check `data/processed` mount in API container |
+| `OllamaClient.generate() got unexpected keyword argument` | Restart API; use fresh client (see `dashboard/ollama_startup.py` reload pattern in API) |
+| Briefing timeout | Lower `OLLAMA_NUM_PREDICT`; use instant fallback |
+| Explain cut off | Raise `OLLAMA_NUM_PREDICT_METRICS` in `.env` |
+| Tunnel 502 | Compose not up; wrong port; Windows firewall |
+| Cox RMSE shows `—` | Expected on FD001; concordance is the Cox signal |
 
 ---
 
-## Phase 3 ??? ???Real-time??? demo (replay worker)
+## Implementation order (summary)
 
-- [ ] **D3.1** `workers/replay_telemetry.py` ??? advance global demo clock
-- [ ] **D3.2** For each engine: expose ???current cycle??? from test trajectory
-- [ ] **D3.3** On tick: run inference ??? update `predictions_latest` ??? evaluate alerts
-- [ ] **D3.4** Config: `DEMO_TICK_SECONDS=2`, `DEMO_DATASET=FD001`
-- [ ] **D3.5** Optional WebSocket `WS /api/v1/stream/fleet` for push updates (nice-to-have)
-- [ ] **D3.6** Document: replay ??? production ingest; roadmap slide for MQTT/OPC-UA
-
----
-
-## Phase 4 ??? AI / briefing service
-
-- [ ] **D4.1** Move Ollama calls out of Streamlit into `api/services/briefing.py`
-- [ ] **D4.2** Single warm-up on API startup (port today???s `ollama_startup` logic)
-- [ ] **D4.3** `instant` ??? synchronous, &lt;100ms, no LLM
-- [ ] **D4.4** `ai` ??? async job queue (in-process `asyncio` OK for 5 users); return `job_id`
-- [ ] **D4.5** Cache briefing by `(asset_id, prediction_version, mode)`
-- [ ] **D4.6** Rate limit: e.g. 3 AI briefings / minute / API key
-- [ ] **D4.7** Env: `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_PRELOAD_ON_STARTUP`
-- [ ] **D4.8** Fallback runbook: set `BRIEFING_AI_ENABLED=false` ??? instant only
-
----
-
-## Phase 5 ??? Streamlit frontend (keep Streamlit, mature UX)
-
-### 5.1 Thin client
-
-- [ ] **D5.1** Add `dashboard/api_client.py` ??? `httpx` wrapper for all v1 endpoints
-- [ ] **D5.2** Remove direct Parquet reads from pages (except dev-only fallback flag)
-- [ ] **D5.3** Remove `create_ollama_client` / `briefing_api` imports from UI
-- [ ] **D5.4** Auth: `st.secrets` API key or demo password ??? `Authorization` header
-
-### 5.2 Design & UX
-
-- [ ] **D5.5** `.streamlit/config.toml` ??? theme (dark industrial), fonts, wide layout
-- [ ] **D5.6** Shared header component: logo, dataset selector, connection status (API + Ollama)
-- [ ] **D5.7** Fleet + Alerts: `st.fragment(run_every=5s)` polling API
-- [ ] **D5.8** Asset detail: charts from `/telemetry`; briefing buttons call API
-- [ ] **D5.9** Loading skeletons + friendly API error banners
-- [ ] **D5.10** Optional: `st.toast` on new critical alert (compare previous poll)
-- [ ] **D5.11** Sidebar: ???AI model ready??? from `GET /ready` (not local Ollama probe)
-
-### 5.3 Pages mapping
-
-| Page | API source |
-|------|------------|
-| Fleet Overview | `GET /fleet` |
-| Asset Detail | `GET /assets/{id}`, `GET /telemetry`, `POST /briefing` |
-| Active Alerts | `GET /alerts`, `POST /workorders`, ack |
-| Model Metrics | MLflow or `GET /admin/model-summary` (optional) |
-
----
-
-## Phase 6 ??? CMMS & integrations
-
-- [ ] **D6.1** `POST /workorders` persists ticket + returns `work_order_id`
-- [ ] **D6.2** Streamlit ???Dispatch to CMMS??? calls API (not `CMMSClient` directly)
-- [ ] **D6.3** Mock external CMMS: log + optional webhook URL env
-- [ ] **D6.4** Show work order status on alert expander
-
----
-
-## Phase 7 ??? Security & ops (demo-appropriate)
-
-- [ ] **D7.1** Demo API key in env; reject missing key on mutating routes
-- [ ] **D7.2** Do not expose Ollama port publicly ??? only API container on LAN
-- [ ] **D7.3** Structured logging (JSON): `request_id`, `latency_ms`, `route`
-- [ ] **D7.4** No secrets in git; document `deploy/.env.demo.example`
-- [ ] **D7.5** Health checks for Docker Compose / VM startup script
-
----
-
-## Phase 8 ??? Packaging & deploy
-
-### 8.1 Docker Compose (recommended for demo day)
-
-- [ ] **D8.1** `deploy/docker-compose.yml` services: `api`, `ui`, `db`, `ollama`, `worker`, `proxy` (optional)
-- [ ] **D8.2** `deploy/Dockerfile.api` ??? multi-stage, bake `models/` or mount volume
-- [ ] **D8.3** `deploy/Dockerfile.ui` ??? Streamlit only
-- [ ] **D8.4** Volume mounts: `data/processed`, `models`, `artifacts`
-- [ ] **D8.5** One command: `docker compose --env-file deploy/.env.demo up -d`
-
-### 8.2 Bare-metal alternative
-
-- [ ] **D8.6** `deploy/run_demo.ps1` / `run_demo.sh` ??? start API, worker, Ollama, Streamlit in order
-- [ ] **D8.7** Process manager note (PM2, systemd) for restart on crash
-
-### 8.3 CI
-
-- [ ] **D8.8** GitHub Actions: `pytest` + API smoke test on PRs to `deployment`
-- [ ] **D8.9** Optional: build Docker image on tag
-
----
-
-## Phase 9 ??? Demo runbook (day-of)
-
-- [ ] **D9.1** `docs/demo_runbook.md` ??? startup order, URLs, credentials
-- [ ] **D9.2** Pre-flight checklist (5 min): `/ready` green, fleet rows &gt; 0, one instant briefing, one AI briefing
-- [ ] **D9.3** Fallback script: AI off, replay speed 0 (frozen snapshot)
-- [ ] **D9.4** Assign roles to 5 attendees (operator, supervisor, etc.) ??? same UI, different assets
-- [ ] **D9.5** Backup: exported Parquet + DB snapshot on USB / second folder
-
----
-
-## Phase 10 ??? UC5 presentation alignment
-
-| UC5 component | Demo story | Doc / API |
-|---------------|------------|-----------|
-| A ??? Ingestion & features | Replay worker + feature pipeline | `POST /admin/reload`, architecture slide |
-| B ??? Models | Inference service + MLflow | `/ready`, Model Metrics page |
-| C ??? Alerts | Alert service + DB + CMMS API | `GET /alerts`, `POST /workorders` |
-| D ??? Dashboard & briefings | Streamlit + briefing API | `POST /briefing`, OpenAPI |
-
-- [ ] **D10.1** Update `ARCHITECTURE.md` with deployment diagram
-- [ ] **D10.2** Add ???Interpretability vs performance??? and ???Security??? slides from API auth + logging
-- [ ] **D10.3** Cite CMAPSS / AI4I in presentation (datasets doc)
-
----
-
-## Suggested implementation order
-
-```text
-Week 1:  P0 ??? D1 (API + schemas) ??? D2 (DB seed) ??? D5.1???D5.4 (Streamlit client)
-Week 2:  D3 (replay) ??? D4 (briefing service) ??? D5.5???D5.11 (UX) ??? D8 (Docker)
-Buffer:  D9 (runbook) + rehearsal + D10 (slides)
-```
-
----
-
-## Out of scope for 5-person demo (document only)
-
-- Kubernetes / multi-region
-- True MQTT / OPC-UA ingest
-- OAuth / enterprise RBAC
-- RAG over maintenance manuals (optional stretch)
-- Real SAP/Maximo CMMS integration
-
----
-
-## Quick reference ??? ports
-
-| Service | Port |
-|---------|------|
-| Streamlit | 8501 |
-| FastAPI | 8000 |
-| Ollama | 11434 (internal) |
-| Postgres | 5432 |
-| MLflow UI | 5000 (optional) |
+1. **Phase 0** — data import (30 min)  
+2. **Phase 1** — FastAPI (2–3 days)  
+3. **Phase 2** — thin Streamlit (1–2 days)  
+4. **Phase 3** — Docker Compose (1 day)  
+5. **Phase 4** — tunnel + interview dry run (half day)  
+6. **Presentation** — after deployment is stable  
 
 ---
 
 ## Related docs
 
-- [ARCHITECTURE.md](../ARCHITECTURE.md) ??? current prototype
-- [cmapss_alerts_cmms.md](./cmapss_alerts_cmms.md) ??? alert field spec
-- [cmapss_phase3_modeling.md](./cmapss_phase3_modeling.md) ??? training pipeline
-- UC5 requirement PDF: `docs/project_requirement/UC5_Eman_Chaudhary.pdf`
+- [ARCHITECTURE.md](../ARCHITECTURE.md) — module overview  
+- [cmapss_phase3_modeling.md](cmapss_phase3_modeling.md) — metrics and UC5 mapping  
+- [cmapss_alerts_cmms.md](cmapss_alerts_cmms.md) — alert fields  
+- [mlflow_databricks_colab.md](mlflow_databricks_colab.md) — experiment evidence  
+- [UC5 requirement PDF](project_requirement/UC5_Eman_Chaudhary.pdf) — assignment spec  
 
 ---
 
-*Last updated: deployment branch bootstrap. Check off items in PRs as they land.*
+*Last updated: deployment architecture targets Docker Compose on the developer laptop with HTTPS tunnel for the interview URL. Implement Phases 1–2 in code before relying on the tunnel for the panel demo.*
