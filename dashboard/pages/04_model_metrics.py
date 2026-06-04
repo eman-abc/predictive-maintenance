@@ -33,7 +33,8 @@ st.divider()
 render_registry_banner(registry)
 
 if summary:
-    render_phase3_summary(summary, dataset_id)
+    registry_entry = (registry or {}).get("datasets", {}).get(dataset_id)
+    render_phase3_summary(summary, dataset_id, registry_entry=registry_entry)
 else:
     st.warning(
         f"No Phase 3 summary for **{dataset_id}**. Import Colab outputs:\n"

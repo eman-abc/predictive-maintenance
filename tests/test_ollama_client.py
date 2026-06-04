@@ -77,3 +77,24 @@ def test_generate_calls_ollama_api(mock_client_cls):
     result = client.generate("Test prompt", system=SYSTEM_PROMPT)
     assert result == "Maintenance briefing text."
     mock_client.post.assert_called_once()
+    call_kwargs = mock_client.post.call_args
+    assert call_kwargs[1]["json"]["options"]["num_predict"] == 120
+
+
+@patch("src.briefings.ollama_client.httpx.Client")
+def test_generate_accepts_num_predict_override(mock_client_cls):
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"response": "Longer metrics text."}
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value = mock_client
+
+    client = OllamaClient(base_url="http://localhost:11434", model="llama3.2")
+    result = client.generate("Metrics prompt", system=SYSTEM_PROMPT, num_predict=320)
+    assert result == "Longer metrics text."
+    payload = mock_client.post.call_args[1]["json"]
+    assert payload["options"]["num_predict"] == 320

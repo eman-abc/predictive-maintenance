@@ -128,9 +128,27 @@ def anomaly_metrics_table(summary: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def render_phase3_summary(summary: dict, dataset_id: str) -> None:
+def render_phase3_summary(
+    summary: dict,
+    dataset_id: str,
+    *,
+    registry_entry: dict | None = None,
+) -> None:
     """Full Phase 3 metrics panel for one FD subset."""
+    from dashboard.components.metric_explanation_panel import (
+        SECTION_ANOMALY,
+        SECTION_COX,
+        SECTION_FAILURE,
+        SECTION_HEADLINE,
+        SECTION_RUL,
+        render_metric_explanation_controls,
+        render_summarize_all_controls,
+    )
+
     st.subheader(f"{dataset_id} — Phase 3 results")
+    st.caption(
+        "Click **Explain** on any block for an Ollama interpretation (each click replaces the previous text)."
+    )
     test = summary.get("test_metrics") or {}
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Test RMSE (winner)", _fmt_metric(test.get("rmse")))
@@ -143,8 +161,23 @@ def render_phase3_summary(summary: dict, dataset_id: str) -> None:
         flags.append("Cox skipped")
     c4.metric("Training", flags[0] if flags else "full pipeline")
 
+    st.markdown("**Headline test results**")
+    render_metric_explanation_controls(
+        SECTION_HEADLINE,
+        dataset_id,
+        summary,
+        registry_entry=registry_entry,
+        button_prefix="headline",
+    )
+
     st.markdown("**RUL model comparison (validation)**")
     st.dataframe(rul_model_comparison(summary), use_container_width=True, hide_index=True)
+    render_metric_explanation_controls(
+        SECTION_RUL,
+        dataset_id,
+        summary,
+        registry_entry=registry_entry,
+    )
 
     cox_df = cox_detail(summary)
     if not cox_df.empty:
@@ -153,14 +186,41 @@ def render_phase3_summary(summary: dict, dataset_id: str) -> None:
         survival_path = ROOT / "models" / f"survival_{dataset_id}.pkl"
         if survival_path.exists():
             st.caption(f"Survival model: `{survival_path.name}`")
+        render_metric_explanation_controls(
+            SECTION_COX,
+            dataset_id,
+            summary,
+            registry_entry=registry_entry,
+        )
 
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("**Failure classifiers (test)**")
         st.dataframe(failure_classifier_table(summary), use_container_width=True, hide_index=True)
+        render_metric_explanation_controls(
+            SECTION_FAILURE,
+            dataset_id,
+            summary,
+            registry_entry=registry_entry,
+            button_prefix="failure",
+        )
     with col_b:
         st.markdown("**Anomaly detection (Isolation Forest)**")
         st.dataframe(anomaly_metrics_table(summary), use_container_width=True, hide_index=True)
+        render_metric_explanation_controls(
+            SECTION_ANOMALY,
+            dataset_id,
+            summary,
+            registry_entry=registry_entry,
+            button_prefix="anomaly",
+        )
+
+    st.divider()
+    render_summarize_all_controls(
+        dataset_id,
+        summary,
+        registry_entry=registry_entry,
+    )
 
     with st.expander("Raw summary JSON"):
         st.json(summary)
