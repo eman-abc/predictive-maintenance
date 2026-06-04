@@ -23,11 +23,6 @@ st.set_page_config(page_title="Model Metrics", layout="wide")
 init_page()
 st.title("Model Metrics")
 
-st.caption(
-    "Interview demo: compare **FD003** and **FD004** (two fault modes). "
-    "Select each from the sidebar dataset picker."
-)
-
 registry = load_training_registry()
 
 # Dataset picker first (sidebar) — always available even if Databricks panel fails

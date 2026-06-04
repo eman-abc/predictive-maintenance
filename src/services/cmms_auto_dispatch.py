@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 from typing import Any
 
@@ -22,23 +23,14 @@ def auto_dispatch_enabled() -> bool:
     return os.getenv("CMMS_AUTO_DISPATCH", "true").lower() in ("1", "true", "yes")
 
 
-def auto_dispatch_critical(
+def _auto_dispatch_critical_impl(
     dataset_id: str,
     *,
-    levels: list[str] | None = None,
+    levels: list[str],
 ) -> dict[str, Any]:
-    """
-    Write critical (default) alerts to CMMS_AUTO_DELTA_TABLE without operator click.
-    Skips assets already present with submit_status=auto_dispatched.
-    """
-    levels = levels or ["critical"]
+    """Databricks writes (run inside timeout wrapper)."""
     if "critical" not in [x.lower() for x in levels]:
         levels = ["critical"]
-
-    if not auto_dispatch_enabled():
-        return {"status": "skipped", "reason": "CMMS_AUTO_DISPATCH is false"}
-    if not is_databricks_logging_configured():
-        return {"status": "skipped", "reason": "Databricks logging not configured"}
 
     fqn = auto_table_fqn()
     ensure_table(fqn=fqn)
@@ -87,3 +79,42 @@ def auto_dispatch_critical(
         "results": dispatched,
         **links,
     }
+
+
+def auto_dispatch_critical(
+    dataset_id: str,
+    *,
+    levels: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Write critical (default) alerts to CMMS_AUTO_DELTA_TABLE without operator click.
+    Skips assets already present with submit_status=auto_dispatched.
+    """
+    levels = levels or ["critical"]
+    if "critical" not in [x.lower() for x in levels]:
+        levels = ["critical"]
+
+    if not auto_dispatch_enabled():
+        return {"status": "skipped", "reason": "CMMS_AUTO_DISPATCH is false"}
+    if not is_databricks_logging_configured():
+        return {"status": "skipped", "reason": "Databricks logging not configured"}
+
+    timeout = float(os.getenv("CMMS_DATABRICKS_TIMEOUT_SECONDS", "25"))
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_auto_dispatch_critical_impl, dataset_id, levels=levels)
+            return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return {
+            "status": "error",
+            "reason": f"Databricks timed out after {timeout:.0f}s",
+            "dispatched_count": 0,
+            "table": auto_table_fqn(),
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "reason": str(exc),
+            "dispatched_count": 0,
+            "table": auto_table_fqn(),
+        }

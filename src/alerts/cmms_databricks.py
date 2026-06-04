@@ -269,11 +269,17 @@ def _connect():
 
     host, token, http_path = databricks_credentials()
     hostname = host.replace("https://", "").replace("http://", "")
-    return sql.connect(
-        server_hostname=hostname,
-        http_path=http_path,
-        access_token=token,
-    )
+    socket_timeout = int(os.getenv("CMMS_DATABRICKS_TIMEOUT_SECONDS", "25"))
+    kwargs: dict[str, Any] = {
+        "server_hostname": hostname,
+        "http_path": http_path,
+        "access_token": token,
+        "_socket_timeout": socket_timeout,
+    }
+    try:
+        return sql.connect(**kwargs, _request_timeout=socket_timeout)
+    except TypeError:
+        return sql.connect(**kwargs)
 
 
 def _migrate_table_columns(fqn: str) -> None:

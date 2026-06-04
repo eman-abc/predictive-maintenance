@@ -71,23 +71,6 @@ else:
         if st.session_state.get(ack_key):
             filtered.at[idx, "ack_status"] = "acknowledged"
 
-# Auto-dispatch critical -> separate Databricks table
-_auto_key = f"auto_dispatch_done_{dataset_id}"
-if _auto_key not in st.session_state:
-    with st.spinner("Auto-dispatching critical alerts to Databricks…"):
-        if use_api_backend():
-            auto_result = post_auto_dispatch(dataset_id, ["critical"])
-        else:
-            auto_result = auto_dispatch_critical(dataset_id, levels=["critical"])
-    st.session_state[_auto_key] = auto_result
-    if auto_result.get("dispatched_count", 0) > 0:
-        st.success(
-            f"Auto-dispatched **{auto_result['dispatched_count']}** critical work order(s) "
-            f"to `{auto_result.get('table', 'cmms_work_orders_auto')}`."
-        )
-    elif auto_result.get("status") == "skipped":
-        st.caption(f"Auto-dispatch skipped: {auto_result.get('reason', '')}")
-
 render_shift_briefing(dataset_id=dataset_id, levels=level_filter)
 
 st.caption(
@@ -115,6 +98,43 @@ st.dataframe(
     use_container_width=True,
     hide_index=True,
 )
+
+# Two-phase auto-dispatch: first paint shows the table; second run talks to Databricks.
+_auto_key = f"auto_dispatch_done_{dataset_id}"
+_pending_key = f"auto_dispatch_pending_{dataset_id}"
+if _auto_key not in st.session_state:
+    if not st.session_state.get(_pending_key):
+        st.session_state[_pending_key] = True
+        st.rerun()
+    else:
+        del st.session_state[_pending_key]
+        with st.spinner("Auto-dispatching critical alerts to Databricks…"):
+            try:
+                if use_api_backend():
+                    auto_result = post_auto_dispatch(dataset_id, ["critical"])
+                else:
+                    auto_result = auto_dispatch_critical(dataset_id, levels=["critical"])
+            except Exception as exc:
+                auto_result = {"status": "error", "reason": str(exc), "dispatched_count": 0}
+        st.session_state[_auto_key] = auto_result
+        st.rerun()
+else:
+    auto_result = st.session_state[_auto_key]
+    if auto_result.get("dispatched_count", 0) > 0:
+        st.success(
+            f"Auto-dispatched **{auto_result['dispatched_count']}** critical work order(s) "
+            f"to `{auto_result.get('table', 'cmms_work_orders_auto')}`."
+        )
+    elif auto_result.get("status") == "skipped":
+        st.caption(f"Auto-dispatch skipped: {auto_result.get('reason', '')}")
+    elif auto_result.get("status") == "error":
+        st.warning(
+            f"Auto-dispatch failed: {auto_result.get('reason', 'unknown')}. "
+            "Alerts above are still valid; check Databricks SQL settings in `.env`."
+        )
+        if st.button("Retry auto-dispatch", key=f"retry_auto_{dataset_id}"):
+            del st.session_state[_auto_key]
+            st.rerun()
 
 for _, row in filtered.iterrows():
     level = str(row.get("alert_level", row.get("status", "warning"))).lower()

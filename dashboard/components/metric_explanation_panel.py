@@ -53,6 +53,10 @@ def _run_generation(
                     registry_entry=registry_entry,
                 )
             return result["text"], result.get("source", "ai")
+        except httpx.TimeoutException:
+            text = build_instant_explanation(section_id, summary, dataset_id)
+            st.warning("API timed out — showing instant summary instead.")
+            return text, "instant_timeout"
         except Exception as exc:
             st.error(f"Could not generate explanation: {exc}")
             return None
@@ -142,13 +146,24 @@ def render_summarize_all_controls(
         "AI text is advisory — confirm against the tables above."
     )
 
-    render_metric_explanation_controls(
-        SECTION_SUMMARIZE,
-        dataset_id,
-        summary,
-        registry_entry=registry_entry,
-        button_prefix="summarize",
-    )
+    c_ai, c_instant = st.columns(2)
+    with c_instant:
+        if st.button(
+            "Instant summary",
+            key=f"metric_instant_summarize_{dataset_id}",
+            help="Template summary (no Ollama wait).",
+        ):
+            text = build_instant_explanation(SECTION_SUMMARIZE, summary, dataset_id)
+            _store_result(dataset_id, SECTION_SUMMARIZE, text)
+            st.rerun()
+    with c_ai:
+        render_metric_explanation_controls(
+            SECTION_SUMMARIZE,
+            dataset_id,
+            summary,
+            registry_entry=registry_entry,
+            button_prefix="summarize",
+        )
 
 
 __all__ = [

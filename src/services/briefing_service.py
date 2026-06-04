@@ -186,7 +186,12 @@ def generate_metric_explanation(
     else:
         num_predict = int(os.getenv("OLLAMA_NUM_PREDICT_METRICS", "320"))
 
-    client = _ollama_client()
+    metrics_timeout = float(os.getenv("OLLAMA_METRICS_TIMEOUT", "90"))
+    import importlib
+    import src.briefings.ollama_client as ollama_mod
+
+    importlib.reload(ollama_mod)
+    client = ollama_mod.OllamaClient(timeout=metrics_timeout)
     if not client.is_available():
         text = build_instant_explanation(section_id, summary, dataset_id)
         return {"text": text, "source": "instant", "section_id": section_id}
@@ -203,6 +208,13 @@ def generate_metric_explanation(
     try:
         text = client.generate(prompt, system=METRIC_SYSTEM, num_predict=num_predict)
         return {"text": text.strip(), "source": "ai", "section_id": section_id}
+    except httpx.TimeoutException:
+        text = build_instant_explanation(section_id, summary, dataset_id)
+        return {
+            "text": text,
+            "source": "instant_timeout",
+            "section_id": section_id,
+        }
     except Exception as exc:
         text = build_instant_explanation(section_id, summary, dataset_id)
         return {

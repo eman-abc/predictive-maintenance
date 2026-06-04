@@ -10,6 +10,8 @@ import pandas as pd
 import streamlit as st
 
 _DEFAULT_TIMEOUT = 120.0
+_CMMS_TIMEOUT = float(os.getenv("API_CMMS_TIMEOUT_SECONDS", "35"))
+_METRICS_TIMEOUT = float(os.getenv("API_METRICS_TIMEOUT_SECONDS", "90"))
 
 
 def api_base_url() -> str | None:
@@ -21,22 +23,22 @@ def use_api_backend() -> bool:
     return api_base_url() is not None
 
 
-def _client() -> httpx.Client:
+def _client(*, timeout: float | None = None) -> httpx.Client:
     base = api_base_url()
     if not base:
         raise RuntimeError("API_BASE_URL is not set")
-    return httpx.Client(base_url=base, timeout=_DEFAULT_TIMEOUT)
+    return httpx.Client(base_url=base, timeout=timeout or _DEFAULT_TIMEOUT)
 
 
-def _get(path: str, **params: Any) -> Any:
-    with _client() as client:
+def _get(path: str, *, timeout: float | None = None, **params: Any) -> Any:
+    with _client(timeout=timeout) as client:
         resp = client.get(path, params=params)
         resp.raise_for_status()
         return resp.json()
 
 
-def _post(path: str, json: dict[str, Any]) -> Any:
-    with _client() as client:
+def _post(path: str, json: dict[str, Any], *, timeout: float | None = None) -> Any:
+    with _client(timeout=timeout) as client:
         resp = client.post(path, json=json)
         resp.raise_for_status()
         return resp.json()
@@ -127,6 +129,7 @@ def post_auto_dispatch(dataset_id: str, levels: list[str] | None = None) -> dict
             "dataset_id": dataset_id,
             "levels": levels or ["critical"],
         },
+        timeout=_CMMS_TIMEOUT,
     )
 
 
@@ -169,6 +172,7 @@ def post_metric_explain(
             "summary": summary,
             "registry_entry": registry_entry,
         },
+        timeout=_METRICS_TIMEOUT,
     )
 
 
